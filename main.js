@@ -23,7 +23,9 @@ function createWindow() {
     minWidth: 900,
     minHeight: 620,
     title: 'Yantra',
-    backgroundColor: '#f7f7f2',
+    transparent: true,
+    backgroundColor: '#00000000',
+    titleBarStyle: 'hiddenInset',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

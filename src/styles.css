@@ -8,7 +8,7 @@ body,
 
 body {
   overflow: hidden;
-  background: #f7f7f2;
+  background: rgba(250, 252, 255, 0.82);
   color: #20201d;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -21,27 +21,114 @@ textarea {
 }
 
 .app-shell {
+  position: relative;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
+  background: rgba(250, 252, 255, 0.82);
+}
+
+.ambient-background {
+  position: absolute;
+  inset: -12%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      115deg,
+      rgba(43, 43, 43, 0.035) 0,
+      rgba(43, 43, 43, 0.035) 1px,
+      transparent 1px,
+      transparent 42px
+    ),
+    linear-gradient(
+      135deg,
+      rgba(126, 147, 178, 0.14),
+      transparent 34%,
+      rgba(250, 252, 255, 0.08) 66%,
+      rgba(43, 43, 43, 0.06)
+    );
+  opacity: 0.8;
+  animation: ambient-drift 18s ease-in-out infinite alternate;
+}
+
+.scatter-grid-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .react-flow {
-  background: #f7f7f2;
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+@keyframes ambient-drift {
+  from {
+    transform: translate3d(-18px, -10px, 0) scale(1);
+  }
+
+  to {
+    transform: translate3d(18px, 14px, 0) scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-background {
+    animation: none;
+  }
+}
+
+.react-flow__pane,
+.react-flow__renderer,
+.react-flow__viewport {
+  cursor: default;
+}
+
+.react-flow__pane.draggable,
+.react-flow__pane.dragging,
+.react-flow__pane.selection {
+  cursor: default;
+}
+
+.react-flow__nodesselection {
+  display: none;
 }
 
 .markdown-node {
   display: flex;
   width: 100%;
   height: 100%;
+  box-sizing: border-box;
   overflow: hidden;
-  border: 1px solid #c8c6b9;
+  border: 1px solid #bfbfbf;
   border-radius: 8px;
-  background: #fffef8;
+  background: #fafcff;
   box-shadow: 0 12px 32px rgba(48, 47, 40, 0.16);
 }
 
 .react-flow__node.selected .markdown-node {
-  border: 3px solid #3f51b5;
+  border-color: #2b2b2b;
+  box-shadow:
+    0 0 0 2px #2b2b2b,
+    0 12px 32px rgba(48, 47, 40, 0.16);
+}
+
+.markdown-node__resize-line {
+  border-color: transparent;
+  opacity: 0;
+}
+
+.markdown-node__resize-handle {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  background: transparent;
+  opacity: 0;
 }
 
 .markdown-node__body,
@@ -61,11 +148,16 @@ textarea {
   overflow: hidden;
 }
 
+.react-flow__node.selected .markdown-node__body {
+  overflow: auto;
+}
+
 .markdown-node__editor {
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
+  overflow: auto;
 }
 
 .markdown-node__editor::placeholder,
