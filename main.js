@@ -4,6 +4,9 @@ const path = require('path');
 
 const DEV_SERVER_URL = 'http://127.0.0.1:5173';
 const CANVAS_FILE_NAME = 'default.canvas';
+const CLOSE_FLUSH_TIMEOUT_MS = 3000;
+
+let nextCloseFlushRequestId = 1;
 
 function createEmptyJsonCanvasDocument() {
   return {
@@ -78,6 +81,62 @@ function registerCanvasIpcHandlers() {
   }));
 }
 
+function requestCanvasFlushBeforeClose(window) {
+  if (window.webContents.isDestroyed()) {
+    return Promise.resolve();
+  }
+
+  const requestId = nextCloseFlushRequestId;
+  nextCloseFlushRequestId += 1;
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      ipcMain.off('canvas:close-flush-complete', handleComplete);
+      console.error('Timed out while waiting for canvas flush before close.');
+      resolve();
+    }, CLOSE_FLUSH_TIMEOUT_MS);
+
+    function handleComplete(_event, completedRequestId, result) {
+      if (completedRequestId !== requestId) {
+        return;
+      }
+
+      clearTimeout(timeout);
+      ipcMain.off('canvas:close-flush-complete', handleComplete);
+
+      if (result?.error) {
+        console.error('Unable to flush canvas before close.', result.error);
+      }
+
+      resolve();
+    }
+
+    ipcMain.on('canvas:close-flush-complete', handleComplete);
+    window.webContents.send('canvas:flush-before-close', requestId);
+  });
+}
+
+function installCloseFlushHandler(window) {
+  let isCloseAllowed = false;
+
+  window.on('close', (event) => {
+    if (isCloseAllowed) {
+      return;
+    }
+
+    event.preventDefault();
+
+    requestCanvasFlushBeforeClose(window).finally(() => {
+      if (window.isDestroyed()) {
+        return;
+      }
+
+      isCloseAllowed = true;
+      window.close();
+    });
+  });
+}
+
 async function loadRenderer(window, attempts = 40) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -108,6 +167,7 @@ function createWindow() {
     },
   });
 
+  installCloseFlushHandler(mainWindow);
   loadRenderer(mainWindow);
 }
 

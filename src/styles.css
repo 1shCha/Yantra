@@ -77,6 +77,54 @@ textarea {
   outline-offset: 2px;
 }
 
+.canvas-persistence-status {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(340px, calc(100vw - 36px));
+  min-height: 34px;
+  box-sizing: border-box;
+  border: 1px solid rgba(43, 43, 43, 0.14);
+  border-radius: 8px;
+  background: rgba(250, 252, 255, 0.94);
+  box-shadow: 0 10px 28px rgba(48, 47, 40, 0.14);
+  color: #36362f;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: auto;
+}
+
+.canvas-persistence-status__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #478a52;
+}
+
+.canvas-persistence-status[data-state='loading'] .canvas-persistence-status__dot,
+.canvas-persistence-status[data-state='saving'] .canvas-persistence-status__dot {
+  background: #4e6f9f;
+}
+
+.canvas-persistence-status[data-state='dirty'] .canvas-persistence-status__dot {
+  background: #a66d19;
+}
+
+.canvas-persistence-status[data-state='error'] {
+  border-color: rgba(184, 50, 50, 0.35);
+  color: #982929;
+}
+
+.canvas-persistence-status[data-state='error'] .canvas-persistence-status__dot {
+  background: #b83232;
+}
+
 
 .react-flow__pane,
 .react-flow__renderer,
