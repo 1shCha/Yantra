@@ -8,6 +8,10 @@ function MarkdownNodeComponent({ id, data, selected }) {
   const [isBodyScrollable, setIsBodyScrollable] = useState(false);
   const [isEditorScrollable, setIsEditorScrollable] = useState(false);
   const isEditing = useCanvasStore((state) => state.editingNodeId === id);
+  const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
+  const selectNode = useCanvasStore((state) => state.selectNode);
+  const toggleNodeSelection = useCanvasStore((state) => state.toggleNodeSelection);
+  const editNode = useCanvasStore((state) => state.editNode);
   const updateNodeContent = useCanvasStore((state) => state.updateNodeContent);
 
   const handleChange = useCallback(
@@ -15,6 +19,31 @@ function MarkdownNodeComponent({ id, data, selected }) {
       updateNodeContent(id, event.target.value);
     },
     [id, updateNodeContent],
+  );
+
+  const handlePointerDownCapture = useCallback(
+    (event) => {
+      if (
+        isEditing ||
+        event.target.closest('.markdown-node__resize-handle') ||
+        event.target.closest('.markdown-node__resize-line')
+      ) {
+        return;
+      }
+
+      if (event.shiftKey) {
+        toggleNodeSelection(id);
+        return;
+      }
+
+      if (selectedNodeIds.length === 1 && selectedNodeIds[0] === id) {
+        editNode(id);
+        return;
+      }
+
+      selectNode(id);
+    },
+    [editNode, id, isEditing, selectNode, selectedNodeIds, toggleNodeSelection],
   );
 
   useEffect(() => {
@@ -66,7 +95,11 @@ function MarkdownNodeComponent({ id, data, selected }) {
   }, [data.content, isEditing]);
 
   return (
-    <section className="markdown-node" data-editing={isEditing}>
+    <section
+      className="markdown-node"
+      data-editing={isEditing}
+      onPointerDownCapture={handlePointerDownCapture}
+    >
       <NodeResizer
         isVisible={selected}
         minWidth={220}

@@ -1,5 +1,6 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
+  Background,
   Controls,
   ReactFlow,
   ReactFlowProvider,
@@ -8,18 +9,85 @@ import {
 } from '@xyflow/react';
 import { MarkdownNode } from './MarkdownNode.jsx';
 import { useCanvasStore } from './stores/canvasStore.js';
-import { ScatterGridBackground } from './ScatterGridBackground.jsx';
+
+const CANVAS_SAVE_DEBOUNCE_MS = 750;
+
+function useCanvasFilePersistence() {
+  const nodes = useCanvasStore((state) => state.nodes);
+  const edges = useCanvasStore((state) => state.edges);
+  const hasLoadedCanvasRef = useRef(false);
+
+  useEffect(() => {
+    const canvasApi = window.yantraCanvas;
+
+    if (!canvasApi) {
+      console.warn('Yantra canvas file API is unavailable; filesystem persistence is disabled.');
+      return undefined;
+    }
+
+    let isActive = true;
+
+    const scheduleSave = () => {
+      const document = useCanvasStore.getState().getJsonCanvasDocument();
+
+      canvasApi.save(document).catch((error) => {
+        console.error('Unable to save canvas document.', error);
+      });
+    };
+
+    canvasApi
+      .load()
+      .then(({ document }) => {
+        if (!isActive) {
+          return;
+        }
+
+        useCanvasStore.getState().loadJsonCanvasDocument(document);
+        hasLoadedCanvasRef.current = true;
+        window.setTimeout(scheduleSave, CANVAS_SAVE_DEBOUNCE_MS);
+      })
+      .catch((error) => {
+        console.error('Unable to load canvas document.', error);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvasApi = window.yantraCanvas;
+
+    if (!canvasApi || !hasLoadedCanvasRef.current) {
+      return undefined;
+    }
+
+    const saveTimer = window.setTimeout(() => {
+      const document = useCanvasStore.getState().getJsonCanvasDocument();
+
+      canvasApi.save(document).catch((error) => {
+        console.error('Unable to save canvas document.', error);
+      });
+    }, CANVAS_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(saveTimer);
+    };
+  }, [nodes, edges]);
+}
 
 function Canvas() {
+  useCanvasFilePersistence();
+
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const onNodesChange = useCanvasStore((state) => state.onNodesChange);
   const onEdgesChange = useCanvasStore((state) => state.onEdgesChange);
   const createMarkdownNode = useCanvasStore((state) => state.createMarkdownNode);
-  const selectNode = useCanvasStore((state) => state.selectNode);
   const editNode = useCanvasStore((state) => state.editNode);
   const clearSelection = useCanvasStore((state) => state.clearSelection);
+  const deleteSelectedNodes = useCanvasStore((state) => state.deleteSelectedNodes);
   const { screenToFlowPosition } = useReactFlow();
 
   const nodeTypes = useMemo(
@@ -56,18 +124,6 @@ function Canvas() {
     [nodes, selectedNodeIds],
   );
 
-  const handleNodeClick = useCallback(
-    (event, node) => {
-      if (selectedNodeIds.length === 1 && selectedNodeIds[0] === node.id) {
-        editNode(node.id);
-        return;
-      }
-
-      selectNode(node.id);
-    },
-    [editNode, selectNode, selectedNodeIds],
-  );
-
   const handleNodeDoubleClick = useCallback((event, node) => {
     event.stopPropagation();
     editNode(node.id);
@@ -77,17 +133,30 @@ function Canvas() {
     clearSelection();
   }, [clearSelection]);
 
+  const selectedNodeCount = selectedNodeIds.length;
+
   return (
     <main className="app-shell">
-      <div className="ambient-background" />
-      <ScatterGridBackground />
+      {selectedNodeCount > 0 && (
+        <aside className="selection-toolbar" aria-label="Selected node actions">
+          <span className="selection-toolbar__count">
+            {selectedNodeCount} selected
+          </span>
+          <button
+            className="selection-toolbar__delete"
+            type="button"
+            onClick={deleteSelectedNodes}
+          >
+            Delete
+          </button>
+        </aside>
+      )}
       <ReactFlow
         nodes={nodesWithInteractionState}
         edges={edges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         onPaneClick={handlePaneClick}
         onDoubleClick={handleCanvasDoubleClick}
@@ -99,9 +168,12 @@ function Canvas() {
         zoomOnDoubleClick={false}
         panOnDrag={false}
         panOnScroll
-        selectionOnDrag
+        selectionOnDrag={false}
+        selectionKeyCode={null}
+        multiSelectionKeyCode="Shift"
         selectionMode={SelectionMode.Partial}
       >
+        <Background variant="lines" gap={18} size={1} />
         <Controls position="bottom-right" />
       </ReactFlow>
     </main>
