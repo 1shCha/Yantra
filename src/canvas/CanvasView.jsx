@@ -1,0 +1,103 @@
+import { useCallback, useMemo } from 'react';
+import {
+  Background,
+  Controls,
+  ReactFlow,
+  SelectionMode,
+  useReactFlow,
+} from '@xyflow/react';
+import { MarkdownNode } from '../MarkdownNode.jsx';
+import { useCanvasStore } from '../stores/canvasStore.js';
+import { CanvasPersistenceStatus } from './CanvasPersistenceStatus.jsx';
+import { SelectionToolbar } from './SelectionToolbar.jsx';
+
+export function CanvasView({ persistenceStatus }) {
+  const nodes = useCanvasStore((state) => state.nodes);
+  const edges = useCanvasStore((state) => state.edges);
+  const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
+  const onNodesChange = useCanvasStore((state) => state.onNodesChange);
+  const onEdgesChange = useCanvasStore((state) => state.onEdgesChange);
+  const createMarkdownNode = useCanvasStore((state) => state.createMarkdownNode);
+  const editNode = useCanvasStore((state) => state.editNode);
+  const clearSelection = useCanvasStore((state) => state.clearSelection);
+  const deleteSelectedNodes = useCanvasStore((state) => state.deleteSelectedNodes);
+  const { screenToFlowPosition } = useReactFlow();
+
+  const nodeTypes = useMemo(
+    () => ({
+      markdownNode: MarkdownNode,
+    }),
+    [],
+  );
+
+  const handleCanvasDoubleClick = useCallback(
+    (event) => {
+      if (
+        event.target.closest('.react-flow__node') ||
+        event.target.closest('.react-flow__controls')
+      ) {
+        return;
+      }
+
+      const flowPosition = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      createMarkdownNode(flowPosition);
+    },
+    [createMarkdownNode, screenToFlowPosition],
+  );
+
+  const nodesWithInteractionState = useMemo(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        selected: selectedNodeIds.includes(node.id),
+      })),
+    [nodes, selectedNodeIds],
+  );
+
+  const handleNodeDoubleClick = useCallback((event, node) => {
+    event.stopPropagation();
+    editNode(node.id);
+  }, [editNode]);
+
+  const handlePaneClick = useCallback(() => {
+    clearSelection();
+  }, [clearSelection]);
+
+  return (
+    <main className="app-shell">
+      <SelectionToolbar
+        selectedNodeCount={selectedNodeIds.length}
+        onDeleteSelectedNodes={deleteSelectedNodes}
+      />
+      <CanvasPersistenceStatus status={persistenceStatus} />
+      <ReactFlow
+        nodes={nodesWithInteractionState}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeDoubleClick={handleNodeDoubleClick}
+        onPaneClick={handlePaneClick}
+        onDoubleClick={handleCanvasDoubleClick}
+        fitView
+        minZoom={0.2}
+        maxZoom={2}
+        zoomOnScroll={false}
+        zoomOnPinch
+        zoomOnDoubleClick={false}
+        panOnDrag={false}
+        panOnScroll
+        selectionOnDrag
+        selectionKeyCode={null}
+        multiSelectionKeyCode="Shift"
+        selectionMode={SelectionMode.Partial}
+      >
+        <Background variant="lines" gap={18} size={1} />
+        <Controls position="bottom-right" />
+      </ReactFlow>
+    </main>
+  );
+}
