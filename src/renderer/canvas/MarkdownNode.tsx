@@ -1,7 +1,13 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { NodeResizer } from '@xyflow/react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  NodeResizer,
+  type ResizeDragEvent,
+  type ResizeParams,
+  type ResizeParamsWithDirection,
+} from '@xyflow/react';
 
 import { useCanvasStore } from '../stores/canvasStore';
+import { useCanvasAlignment } from './canvas-alignment-context';
 import type { MarkdownNodeData } from './react-flow-mapping';
 
 interface MarkdownNodeComponentProps {
@@ -10,8 +16,30 @@ interface MarkdownNodeComponentProps {
   selected: boolean;
 }
 
+const NODE_MIN_WIDTH = 220;
+const NODE_MIN_HEIGHT = 160;
+
+function isSameGeometry(
+  first: ResizeParamsWithDirection,
+  second: { height: number; width: number; x: number; y: number },
+): boolean {
+  return (
+    first.x === second.x &&
+    first.y === second.y &&
+    first.width === second.width &&
+    first.height === second.height
+  );
+}
+
 function isElementTarget(target: EventTarget | null): target is Element {
   return target instanceof Element;
+}
+
+function focusEditorAtEnd(editor: HTMLTextAreaElement) {
+  const caretPosition = editor.value.length;
+  editor.focus({ preventScroll: true });
+  editor.setSelectionRange(caretPosition, caretPosition);
+  editor.scrollTop = editor.scrollHeight;
 }
 
 function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProps) {
@@ -19,9 +47,13 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isBodyScrollable, setIsBodyScrollable] = useState(false);
   const [isEditorScrollable, setIsEditorScrollable] = useState(false);
+  const [isEditorReady, setIsEditorReady] = useState(false);
   const isEditing = useCanvasStore((state) => state.editingNodeId === id);
   const activateNode = useCanvasStore((state) => state.activateNode);
+  const setNodeGeometry = useCanvasStore((state) => state.setNodeGeometry);
   const updateNodeContent = useCanvasStore((state) => state.updateNodeContent);
+  const { applyResizeAlignment, clearAlignmentGuides, setResizeStartBounds } =
+    useCanvasAlignment();
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -67,11 +99,46 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
     [isEditing],
   );
 
-  useEffect(() => {
-    if (isEditing) {
-      editorRef.current?.focus();
+  const handleSelectStart = useCallback(
+    (event: React.SyntheticEvent<HTMLElement>) => {
+      if (isEditorReady) {
+        return;
+      }
+
+      event.preventDefault();
+    },
+    [isEditorReady],
+  );
+
+  useLayoutEffect(() => {
+    if (!isEditing) {
+      setIsEditorReady(false);
+      return undefined;
     }
+
+    // Keep the preview mounted until leftover click/dblclick events finish so
+    // they cannot select a word in the textarea.
+    const timeoutId = window.setTimeout(() => {
+      setIsEditorReady(true);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [isEditing]);
+
+  useLayoutEffect(() => {
+    if (!isEditorReady) {
+      return;
+    }
+
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+
+    focusEditorAtEnd(editor);
+  }, [isEditorReady]);
 
   useEffect(() => {
     const body = bodyRef.current;
@@ -96,7 +163,7 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor || !isEditing) {
+    if (!editor || !isEditorReady) {
       setIsEditorScrollable(false);
       return undefined;
     }
@@ -113,7 +180,42 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
     return () => {
       resizeObserver.disconnect();
     };
-  }, [data.content, isEditing]);
+  }, [data.content, isEditorReady]);
+
+  const handleResizeStart = useCallback(
+    (_event: ResizeDragEvent, params: ResizeParams) => {
+      setResizeStartBounds(id, {
+        x: params.x,
+        y: params.y,
+        width: params.width,
+        height: params.height,
+      });
+    },
+    [id, setResizeStartBounds],
+  );
+
+  const handleShouldResize = useCallback(
+    (_event: ResizeDragEvent, params: ResizeParamsWithDirection) => {
+      const { geometry } = applyResizeAlignment(id, {
+        x: params.x,
+        y: params.y,
+        width: params.width,
+        height: params.height,
+      });
+
+      if (!isSameGeometry(params, geometry)) {
+        setNodeGeometry(id, geometry);
+        return false;
+      }
+
+      return true;
+    },
+    [applyResizeAlignment, id, setNodeGeometry],
+  );
+
+  const handleResizeEnd = useCallback(() => {
+    clearAlignmentGuides();
+  }, [clearAlignmentGuides]);
 
   return (
     <section
@@ -121,15 +223,19 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
       data-editing={isEditing}
       onClickCapture={handleClickCapture}
       onPointerDownCapture={handlePointerDownCapture}
+      onSelectStart={handleSelectStart}
     >
       <NodeResizer
         isVisible={selected}
-        minWidth={220}
-        minHeight={160}
+        minWidth={NODE_MIN_WIDTH}
+        minHeight={NODE_MIN_HEIGHT}
         handleClassName="markdown-node__resize-handle"
         lineClassName="markdown-node__resize-line"
+        onResizeStart={handleResizeStart}
+        onResizeEnd={handleResizeEnd}
+        shouldResize={handleShouldResize}
       />
-      {isEditing ? (
+      {isEditorReady ? (
         <textarea
           ref={editorRef}
           className={`markdown-node__editor nodrag ${

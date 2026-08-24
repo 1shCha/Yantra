@@ -108,7 +108,55 @@ describe('decodeJsonCanvasDocument', () => {
   it('returns empty arrays for a missing canvas file payload', () => {
     const document = decodeJsonCanvasDocument(JSON.stringify({}));
 
-    expect(document).toEqual({ nodes: [], edges: [] });
+    expect(document).toEqual({ nodes: [], edges: [], groups: [] });
+  });
+
+  it('sanitizes persistent group membership deterministically', () => {
+    const nodes = ['node-a', 'node-b', 'node-c', 'node-d', 'node-e', 'node-f'].map((id, index) => ({
+      id,
+      type: JSON_CANVAS_TEXT_NODE_TYPE,
+      x: index * 100,
+      y: 0,
+      width: 80,
+      height: 60,
+      text: id,
+    }));
+
+    const document = decodeJsonCanvasDocument(
+      JSON.stringify({
+        nodes,
+        edges: [],
+        groups: [
+          {
+            id: 'group-1',
+            nodeIds: ['node-a', 'node-a', 'node-b', 'missing-node'],
+          },
+          {
+            id: 'group-2',
+            nodeIds: ['node-b', 'node-c', 'node-d'],
+          },
+          {
+            id: 'discarded-group',
+            nodeIds: ['node-d'],
+          },
+          {
+            id: 'group-1',
+            nodeIds: ['node-e', 'node-f'],
+          },
+        ],
+      }),
+    );
+
+    expect(document.groups).toEqual([
+      {
+        id: 'group-1',
+        nodeIds: ['node-a', 'node-b'],
+      },
+      {
+        id: 'group-2',
+        nodeIds: ['node-c', 'node-d'],
+      },
+    ]);
   });
 });
 
@@ -116,8 +164,24 @@ describe('encodeJsonCanvasDocument', () => {
   it('accepts a normalized document from decode', () => {
     const document = decodeJsonCanvasDocument(
       JSON.stringify({
-        nodes: [{ type: JSON_CANVAS_TEXT_NODE_TYPE, x: 1, y: 2, text: 'ok' }],
+        nodes: [
+          {
+            id: 'node-1',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 1,
+            y: 2,
+            text: 'first',
+          },
+          {
+            id: 'node-2',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 301,
+            y: 202,
+            text: 'second',
+          },
+        ],
         edges: [],
+        groups: [{ id: 'group-1', nodeIds: ['node-1', 'node-2'] }],
       }),
     );
 

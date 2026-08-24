@@ -64,6 +64,11 @@ const lenientEdgeInputSchema = z.object({
   label: z.string().optional(),
 });
 
+const lenientGroupInputSchema = z.object({
+  id: z.string().optional(),
+  nodeIds: z.array(z.string()).default([]),
+});
+
 export const jsonCanvasNodeSchema = z.object({
   id: z.string(),
   type: z.literal(JSON_CANVAS_TEXT_NODE_TYPE),
@@ -87,21 +92,35 @@ export const jsonCanvasEdgeSchema = z.object({
   label: z.string().optional(),
 });
 
+export const jsonCanvasGroupSchema = z.object({
+  id: z.string(),
+  nodeIds: z.array(z.string()).min(2),
+});
+
 export const jsonCanvasDocumentSchema = z.object({
   nodes: z.array(jsonCanvasNodeSchema),
   edges: z.array(jsonCanvasEdgeSchema),
+  groups: z.array(jsonCanvasGroupSchema),
 });
 
 export type JsonCanvasNode = z.infer<typeof jsonCanvasNodeSchema>;
 export type JsonCanvasEdge = z.infer<typeof jsonCanvasEdgeSchema>;
+export type JsonCanvasGroup = z.infer<typeof jsonCanvasGroupSchema>;
 export type JsonCanvasDocument = z.infer<typeof jsonCanvasDocumentSchema>;
 
 type LenientNodeInput = z.infer<typeof lenientNodeInputSchema>;
 type LenientEdgeInput = z.infer<typeof lenientEdgeInputSchema>;
+type LenientGroupInput = z.infer<typeof lenientGroupInputSchema>;
+
+export interface JsonCanvasGroupInput {
+  id?: string;
+  nodeIds: string[];
+}
 
 const jsonCanvasDocumentInputSchema = z.object({
   nodes: z.array(z.looseObject({})).default([]),
   edges: z.array(z.looseObject({})).default([]),
+  groups: z.array(z.looseObject({})).default([]),
 });
 
 function toCanvasInteger(value: number, fallback = 0): number {
@@ -217,9 +236,54 @@ function normalizeEdge(input: LenientEdgeInput): JsonCanvasEdge | null {
   };
 }
 
+export function sanitizeJsonCanvasGroups(
+  inputs: readonly JsonCanvasGroupInput[],
+  availableNodeIds: ReadonlySet<string>,
+): JsonCanvasGroup[] {
+  const claimedNodeIds = new Set<string>();
+  const groupIds = new Set<string>();
+  const groups: JsonCanvasGroup[] = [];
+
+  for (const input of inputs) {
+    const nodeIds: string[] = [];
+    const groupNodeIds = new Set<string>();
+
+    for (const nodeId of input.nodeIds) {
+      if (
+        !availableNodeIds.has(nodeId) ||
+        claimedNodeIds.has(nodeId) ||
+        groupNodeIds.has(nodeId)
+      ) {
+        continue;
+      }
+
+      groupNodeIds.add(nodeId);
+      nodeIds.push(nodeId);
+    }
+
+    if (nodeIds.length < 2) {
+      continue;
+    }
+
+    const id = input.id;
+    if (id === undefined || groupIds.has(id)) {
+      continue;
+    }
+
+    groups.push({ id, nodeIds });
+    groupIds.add(id);
+    for (const nodeId of nodeIds) {
+      claimedNodeIds.add(nodeId);
+    }
+  }
+
+  return groups;
+}
+
 function normalizeDocument(input: {
   nodes: LenientNodeInput[];
   edges: LenientEdgeInput[];
+  groups: LenientGroupInput[];
 }): JsonCanvasDocument {
   const nodes = input.nodes
     .map((node) => normalizeNode(node))
@@ -229,7 +293,12 @@ function normalizeDocument(input: {
     .map((edge) => normalizeEdge(edge))
     .filter((edge): edge is JsonCanvasEdge => edge !== null);
 
-  return { nodes, edges };
+  const groups = sanitizeJsonCanvasGroups(
+    input.groups,
+    new Set(nodes.map((node) => node.id)),
+  );
+
+  return { nodes, edges, groups };
 }
 
 export function decodeJsonCanvasDocument(raw: string): JsonCanvasDocument {
@@ -249,6 +318,7 @@ export function decodeJsonCanvasDocument(raw: string): JsonCanvasDocument {
   return normalizeDocument({
     nodes: inputResult.data.nodes.map((node) => lenientNodeInputSchema.parse(node)),
     edges: inputResult.data.edges.map((edge) => lenientEdgeInputSchema.parse(edge)),
+    groups: inputResult.data.groups.map((group) => lenientGroupInputSchema.parse(group)),
   });
 }
 
@@ -257,5 +327,5 @@ export function encodeJsonCanvasDocument(document: JsonCanvasDocument): JsonCanv
 }
 
 export function createEmptyJsonCanvasDocument(): JsonCanvasDocument {
-  return { nodes: [], edges: [] };
+  return { nodes: [], edges: [], groups: [] };
 }

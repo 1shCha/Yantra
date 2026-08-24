@@ -3,10 +3,12 @@ import type { Edge, Node } from '@xyflow/react';
 import {
   JSON_CANVAS_TEXT_NODE_TYPE,
   REACT_FLOW_TEXT_NODE_TYPE,
+  sanitizeJsonCanvasGroups,
   type CanvasEnd,
   type CanvasSide,
   type JsonCanvasDocument,
   type JsonCanvasEdge,
+  type JsonCanvasGroup,
   type JsonCanvasNode,
 } from '../../shared/json-canvas';
 
@@ -31,10 +33,12 @@ interface MarkdownFlowEdgeData extends Record<string, unknown> {
 }
 
 export type MarkdownFlowEdge = Edge<MarkdownFlowEdgeData>;
+export type CanvasGroup = JsonCanvasGroup;
 
 export interface CanvasFlowState {
   nodes: MarkdownFlowNode[];
   edges: MarkdownFlowEdge[];
+  groups: CanvasGroup[];
 }
 
 function toCanvasInteger(value: number, fallback = 0): number {
@@ -139,6 +143,10 @@ export function toJsonCanvasDocument(state: CanvasFlowState): JsonCanvasDocument
   return {
     nodes: state.nodes.map(jsonCanvasNodeFromFlowNode),
     edges: state.edges.map(jsonCanvasEdgeFromFlowEdge),
+    groups: state.groups.map((group) => ({
+      id: group.id,
+      nodeIds: [...group.nodeIds],
+    })),
   };
 }
 
@@ -156,4 +164,21 @@ export function hydrateEdges(edges: JsonCanvasEdge[] | undefined): MarkdownFlowE
   }
 
   return edges.map(jsonCanvasEdgeToReactFlowEdge);
+}
+
+export function hydrateGroups(
+  groups: JsonCanvasGroup[] | undefined,
+  nodes: readonly MarkdownFlowNode[],
+): CanvasGroup[] {
+  if (!Array.isArray(groups)) {
+    return [];
+  }
+
+  return sanitizeJsonCanvasGroups(
+    groups,
+    new Set(nodes.map((node) => node.id)),
+  ).map((group) => ({
+    id: group.id,
+    nodeIds: [...group.nodeIds],
+  }));
 }

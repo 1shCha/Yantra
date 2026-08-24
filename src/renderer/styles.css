@@ -34,6 +34,98 @@ textarea {
   background: rgba(250, 252, 255, 0.82);
 }
 
+.alignment-guide {
+  position: absolute;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.alignment-guide[data-orientation='vertical'] {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(32, 32, 29, 0.58) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.alignment-guide[data-orientation='horizontal'] {
+  background: repeating-linear-gradient(
+    to right,
+    rgba(32, 32, 29, 0.58) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.alignment-guide__endpoint {
+  position: absolute;
+  border-radius: 50%;
+  background: #000;
+}
+
+.alignment-guide[data-orientation='vertical'] .alignment-guide__endpoint {
+  left: 50%;
+}
+
+.alignment-guide[data-orientation='vertical'] .alignment-guide__endpoint[data-end='start'] {
+  top: 0;
+  transform: translateX(-50%);
+}
+
+.alignment-guide[data-orientation='vertical'] .alignment-guide__endpoint[data-end='end'] {
+  bottom: 0;
+  transform: translateX(-50%);
+}
+
+.alignment-guide[data-orientation='horizontal'] .alignment-guide__endpoint {
+  top: 50%;
+}
+
+.alignment-guide[data-orientation='horizontal'] .alignment-guide__endpoint[data-end='start'] {
+  left: 0;
+  transform: translateY(-50%);
+}
+
+.alignment-guide[data-orientation='horizontal'] .alignment-guide__endpoint[data-end='end'] {
+  right: 0;
+  transform: translateY(-50%);
+}
+
+.group-outline {
+  position: absolute;
+  /* Stay below nodes so member clicks, borders, and resize margins win. */
+  z-index: -1;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.group-outline__visible {
+  stroke: rgba(32, 32, 29, 0.48);
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.group-outline[data-selected='true'] .group-outline__visible,
+.group-outline:focus-within .group-outline__visible {
+  stroke: rgba(32, 32, 29, 0.9);
+}
+
+.group-outline__hit-target {
+  fill: transparent;
+  stroke: transparent;
+  stroke-linejoin: round;
+  cursor: grab;
+  /* Fill + stroke so empty interior and outline both drag the group. */
+  pointer-events: all;
+}
+
+.group-outline__hit-target:active {
+  cursor: grabbing;
+}
+
+.group-outline__hit-target:focus {
+  outline: none;
+}
+
 .selection-toolbar {
   position: absolute;
   bottom: 18px;
@@ -57,6 +149,21 @@ textarea {
   font-weight: 700;
 }
 
+.selection-toolbar__action {
+  border: 1px solid rgba(43, 43, 43, 0.28);
+  border-radius: 6px;
+  background: transparent;
+  color: #2b2b2b;
+  cursor: pointer;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.selection-toolbar__action:hover {
+  background: rgba(43, 43, 43, 0.07);
+}
+
 .selection-toolbar__delete {
   border: 1px solid #b83232;
   border-radius: 6px;
@@ -72,6 +179,7 @@ textarea {
   background: #982929;
 }
 
+.selection-toolbar__action:focus-visible,
 .selection-toolbar__delete:focus-visible {
   outline: 2px solid #2b2b2b;
   outline-offset: 2px;
@@ -199,6 +307,7 @@ textarea {
 .markdown-node__body {
   cursor: grab;
   overflow: hidden;
+  user-select: none;
 }
 
 .react-flow__node.selected .markdown-node__body {

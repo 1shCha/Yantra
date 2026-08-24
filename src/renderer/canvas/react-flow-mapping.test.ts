@@ -30,6 +30,7 @@ describe('toJsonCanvasDocument', () => {
         }),
       ],
       edges: [],
+      groups: [],
     });
 
     expect(document.nodes[0]).toMatchObject({
@@ -47,6 +48,7 @@ describe('toJsonCanvasDocument', () => {
         }),
       ],
       edges: [],
+      groups: [],
     });
 
     expect(document.nodes[0]?.width).toBe(410);
