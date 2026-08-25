@@ -1,7 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  Background,
-  BackgroundVariant,
   Controls,
   ReactFlow,
   SelectionMode,
@@ -27,6 +25,7 @@ import {
   CanvasAlignmentProvider,
   type NodeGeometry,
 } from './canvas-alignment-context';
+import { CanvasBackdrop } from './CanvasBackdrop';
 import { CanvasPersistenceStatus, type PersistenceStatus } from './CanvasPersistenceStatus';
 import { GroupOutlines } from './GroupOutlines';
 import { MarkdownNode } from './MarkdownNode';
@@ -402,7 +401,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           elevateNodesOnSelect={false}
           zIndexMode="manual"
         >
-          <Background variant={BackgroundVariant.Lines} gap={18} size={1} />
+          <CanvasBackdrop />
           <GroupOutlines
             groups={groups}
             nodes={nodes}

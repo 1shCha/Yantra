@@ -26,8 +26,8 @@ export function createWindow(): void {
     minWidth: 900,
     minHeight: 620,
     title: 'Yantra',
-    transparent: true,
-    backgroundColor: '#00000000',
+    transparent: false,
+    backgroundColor: '#fafcff',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       contextIsolation: true,
