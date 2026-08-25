@@ -11,6 +11,7 @@ import {
   type JsonCanvasGroup,
   type JsonCanvasNode,
 } from '../../shared/json-canvas';
+import { reconcileLayerOrder } from '../../shared/stacking-order';
 
 const NODE_WIDTH = 320;
 const NODE_HEIGHT = 220;
@@ -42,6 +43,7 @@ export interface CanvasFlowState {
   nodes: MarkdownFlowNode[];
   edges: MarkdownFlowEdge[];
   groups: CanvasGroup[];
+  layerOrder?: readonly string[];
 }
 
 function toCanvasInteger(value: number, fallback = 0): number {
@@ -143,13 +145,20 @@ export function createMarkdownNodeAt(position: { x: number; y: number }): Markdo
 }
 
 export function toJsonCanvasDocument(state: CanvasFlowState): JsonCanvasDocument {
+  const groups = state.groups.map((group) => ({
+    id: group.id,
+    nodeIds: [...group.nodeIds],
+  }));
+
   return {
     nodes: state.nodes.map(jsonCanvasNodeFromFlowNode),
     edges: state.edges.map(jsonCanvasEdgeFromFlowEdge),
-    groups: state.groups.map((group) => ({
-      id: group.id,
-      nodeIds: [...group.nodeIds],
-    })),
+    groups,
+    layerOrder: reconcileLayerOrder(
+      state.layerOrder ?? [],
+      state.nodes.map((node) => node.id),
+      groups,
+    ),
   };
 }
 
@@ -184,4 +193,16 @@ export function hydrateGroups(
     id: group.id,
     nodeIds: [...group.nodeIds],
   }));
+}
+
+export function hydrateLayerOrder(
+  layerOrder: readonly string[] | undefined,
+  nodes: readonly MarkdownFlowNode[],
+  groups: readonly CanvasGroup[],
+): string[] {
+  return reconcileLayerOrder(
+    layerOrder ?? [],
+    nodes.map((node) => node.id),
+    groups,
+  );
 }

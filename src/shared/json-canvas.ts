@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { reconcileLayerOrder } from './stacking-order';
+
 export const JSON_CANVAS_TEXT_NODE_TYPE = 'text' as const;
 export const REACT_FLOW_TEXT_NODE_TYPE = 'markdownNode' as const;
 
@@ -101,6 +103,7 @@ export const jsonCanvasDocumentSchema = z.object({
   nodes: z.array(jsonCanvasNodeSchema),
   edges: z.array(jsonCanvasEdgeSchema),
   groups: z.array(jsonCanvasGroupSchema),
+  layerOrder: z.array(z.string()),
 });
 
 export type JsonCanvasNode = z.infer<typeof jsonCanvasNodeSchema>;
@@ -121,6 +124,7 @@ const jsonCanvasDocumentInputSchema = z.object({
   nodes: z.array(z.looseObject({})).default([]),
   edges: z.array(z.looseObject({})).default([]),
   groups: z.array(z.looseObject({})).default([]),
+  layerOrder: z.array(z.string()).catch([]),
 });
 
 function toCanvasInteger(value: number, fallback = 0): number {
@@ -284,6 +288,7 @@ function normalizeDocument(input: {
   nodes: LenientNodeInput[];
   edges: LenientEdgeInput[];
   groups: LenientGroupInput[];
+  layerOrder: string[];
 }): JsonCanvasDocument {
   const nodes = input.nodes
     .map((node) => normalizeNode(node))
@@ -298,7 +303,16 @@ function normalizeDocument(input: {
     new Set(nodes.map((node) => node.id)),
   );
 
-  return { nodes, edges, groups };
+  return {
+    nodes,
+    edges,
+    groups,
+    layerOrder: reconcileLayerOrder(
+      input.layerOrder,
+      nodes.map((node) => node.id),
+      groups,
+    ),
+  };
 }
 
 export function decodeJsonCanvasDocument(raw: string): JsonCanvasDocument {
@@ -319,6 +333,7 @@ export function decodeJsonCanvasDocument(raw: string): JsonCanvasDocument {
     nodes: inputResult.data.nodes.map((node) => lenientNodeInputSchema.parse(node)),
     edges: inputResult.data.edges.map((edge) => lenientEdgeInputSchema.parse(edge)),
     groups: inputResult.data.groups.map((group) => lenientGroupInputSchema.parse(group)),
+    layerOrder: inputResult.data.layerOrder,
   });
 }
 
@@ -327,5 +342,5 @@ export function encodeJsonCanvasDocument(document: JsonCanvasDocument): JsonCanv
 }
 
 export function createEmptyJsonCanvasDocument(): JsonCanvasDocument {
-  return { nodes: [], edges: [], groups: [] };
+  return { nodes: [], edges: [], groups: [], layerOrder: [] };
 }

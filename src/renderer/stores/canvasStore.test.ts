@@ -36,6 +36,7 @@ const initialDocument = {
     },
   ],
   groups: [],
+  layerOrder: ['moving-node', 'stationary-node'],
 } satisfies JsonCanvasDocument;
 
 describe('setNodePosition', () => {
@@ -212,5 +213,52 @@ describe('group lifecycle', () => {
       ],
       selectedGroupId: null,
     });
+    expect(useCanvasStore.getState().layerOrder).toEqual([groupId]);
+  });
+});
+
+describe('stacking order', () => {
+  beforeEach(() => {
+    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
+  });
+
+  afterEach(() => {
+    useCanvasStore.getState().loadJsonCanvasDocument(null);
+  });
+
+  it('raises a dragged node above other nodes and keeps that order after reload', () => {
+    useCanvasStore.getState().raiseNodeStacking('moving-node');
+    expect(useCanvasStore.getState().layerOrder).toEqual(['stationary-node', 'moving-node']);
+
+    useCanvasStore.getState().raiseNodeStacking('stationary-node');
+    expect(useCanvasStore.getState().layerOrder).toEqual(['moving-node', 'stationary-node']);
+
+    const savedDocument = useCanvasStore.getState().getJsonCanvasDocument();
+    expect(savedDocument.layerOrder).toEqual(['moving-node', 'stationary-node']);
+
+    useCanvasStore.getState().loadJsonCanvasDocument(
+      decodeJsonCanvasDocument(JSON.stringify(savedDocument)),
+    );
+    expect(useCanvasStore.getState().layerOrder).toEqual(['moving-node', 'stationary-node']);
+  });
+
+  it('raises a group as one unit including its members', () => {
+    useCanvasStore.getState().selectNode('moving-node');
+    useCanvasStore.getState().toggleNodeSelection('stationary-node');
+    useCanvasStore.getState().groupSelectedNodes();
+    const groupId = useCanvasStore.getState().selectedGroupId;
+    expect(groupId).not.toBeNull();
+    expect(useCanvasStore.getState().layerOrder).toEqual([groupId]);
+
+    useCanvasStore.getState().createMarkdownNode({ x: 800, y: 100 });
+    const createdNodeId = useCanvasStore.getState().selectedNodeIds[0];
+    expect(createdNodeId).toEqual(expect.any(String));
+    expect(useCanvasStore.getState().layerOrder).toEqual([groupId, createdNodeId]);
+
+    useCanvasStore.getState().raiseStackingUnit(groupId ?? '');
+    expect(useCanvasStore.getState().layerOrder).toEqual([createdNodeId, groupId]);
+
+    useCanvasStore.getState().raiseNodeStacking('moving-node');
+    expect(useCanvasStore.getState().layerOrder).toEqual([createdNodeId, groupId]);
   });
 });

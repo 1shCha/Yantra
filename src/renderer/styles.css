@@ -36,7 +36,7 @@ textarea {
 
 .alignment-guide {
   position: absolute;
-  z-index: 1000;
+  z-index: 100000;
   pointer-events: none;
 }
 
@@ -92,8 +92,6 @@ textarea {
 
 .group-outline {
   position: absolute;
-  /* Stay below nodes so member clicks, borders, and resize margins win. */
-  z-index: -1;
   overflow: visible;
   pointer-events: none;
 }

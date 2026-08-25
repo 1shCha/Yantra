@@ -108,7 +108,7 @@ describe('decodeJsonCanvasDocument', () => {
   it('returns empty arrays for a missing canvas file payload', () => {
     const document = decodeJsonCanvasDocument(JSON.stringify({}));
 
-    expect(document).toEqual({ nodes: [], edges: [], groups: [] });
+    expect(document).toEqual({ nodes: [], edges: [], groups: [], layerOrder: [] });
   });
 
   it('sanitizes persistent group membership deterministically', () => {
@@ -157,6 +157,48 @@ describe('decodeJsonCanvasDocument', () => {
         nodeIds: ['node-c', 'node-d'],
       },
     ]);
+    expect(document.layerOrder).toEqual(['group-1', 'group-2', 'node-e', 'node-f']);
+  });
+
+  it('restores a saved layer order and ignores stale ids', () => {
+    const document = decodeJsonCanvasDocument(
+      JSON.stringify({
+        nodes: [
+          {
+            id: 'node-a',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 60,
+            text: 'a',
+          },
+          {
+            id: 'node-b',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 100,
+            y: 0,
+            width: 80,
+            height: 60,
+            text: 'b',
+          },
+          {
+            id: 'node-c',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 200,
+            y: 0,
+            width: 80,
+            height: 60,
+            text: 'c',
+          },
+        ],
+        edges: [],
+        groups: [{ id: 'group-1', nodeIds: ['node-a', 'node-b'] }],
+        layerOrder: ['missing', 'node-c', 'group-1', 'node-c'],
+      }),
+    );
+
+    expect(document.layerOrder).toEqual(['node-c', 'group-1']);
   });
 });
 

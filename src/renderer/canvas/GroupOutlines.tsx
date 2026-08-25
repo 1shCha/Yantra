@@ -23,6 +23,7 @@ interface GroupOutlinesProps {
   groups: readonly CanvasGroup[];
   nodes: readonly MarkdownFlowNode[];
   selectedGroupId: string | null;
+  groupOutlineZIndexById: ReadonlyMap<string, number>;
   onGroupPointerDown: (
     event: React.PointerEvent<SVGPolygonElement>,
     groupId: string,
@@ -80,6 +81,7 @@ export function GroupOutlines({
   groups,
   nodes,
   selectedGroupId,
+  groupOutlineZIndexById,
   onGroupPointerDown,
   onGroupPointerMove,
   onGroupPointerUp,
@@ -126,6 +128,7 @@ export function GroupOutlines({
               left: outline.left,
               top: outline.top,
               width: outline.width,
+              zIndex: groupOutlineZIndexById.get(outline.groupId) ?? 0,
             }}
           >
             <polygon

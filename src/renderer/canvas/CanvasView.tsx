@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react';
 
 import { REACT_FLOW_TEXT_NODE_TYPE } from '../../shared/json-canvas';
+import { getStackingZIndices } from '../../shared/stacking-order';
 import { useCanvasStore } from '../stores/canvasStore';
 import { AlignmentGuides } from './AlignmentGuides';
 import {
@@ -81,6 +82,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   const groups = useCanvasStore((state) => state.groups);
+  const layerOrder = useCanvasStore((state) => state.layerOrder);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const selectedGroupId = useCanvasStore((state) => state.selectedGroupId);
   const onNodesChange = useCanvasStore((state) => state.onNodesChange);
@@ -93,6 +95,8 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   const selectGroup = useCanvasStore((state) => state.selectGroup);
   const ungroupSelectedGroup = useCanvasStore((state) => state.ungroupSelectedGroup);
   const moveGroupBy = useCanvasStore((state) => state.moveGroupBy);
+  const raiseNodeStacking = useCanvasStore((state) => state.raiseNodeStacking);
+  const raiseStackingUnit = useCanvasStore((state) => state.raiseStackingUnit);
   const deleteSelectedNodes = useCanvasStore((state) => state.deleteSelectedNodes);
   const deleteSelectedGroup = useCanvasStore((state) => state.deleteSelectedGroup);
   const { getViewport, getZoom, screenToFlowPosition } = useReactFlow();
@@ -128,13 +132,19 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
     [createMarkdownNode, screenToFlowPosition],
   );
 
+  const stackingZIndices = useMemo(
+    () => getStackingZIndices(layerOrder, groups),
+    [groups, layerOrder],
+  );
+
   const nodesWithInteractionState = useMemo(
     () =>
       nodes.map((node) => ({
         ...node,
         selected: selectedNodeIds.includes(node.id),
+        zIndex: stackingZIndices.nodeZIndexById.get(node.id) ?? 0,
       })),
-    [nodes, selectedNodeIds],
+    [nodes, selectedNodeIds, stackingZIndices],
   );
 
   const canGroupSelectedNodes = useMemo(() => {
@@ -168,6 +178,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
       event.preventDefault();
       event.stopPropagation();
       selectGroup(groupId);
+      raiseStackingUnit(groupId);
       setAlignmentResult(null);
       groupDragStateRef.current = {
         groupId,
@@ -177,7 +188,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
       };
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [selectGroup],
+    [raiseStackingUnit, selectGroup],
   );
 
   const handleGroupPointerMove = useCallback(
@@ -229,9 +240,13 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
     [],
   );
 
-  const clearAlignmentGuides = useCallback<OnNodeDrag<MarkdownFlowNode>>(() => {
-    setAlignmentResult(null);
-  }, []);
+  const handleNodeDragStart = useCallback<OnNodeDrag<MarkdownFlowNode>>(
+    (_event, draggedNode) => {
+      raiseNodeStacking(draggedNode.id);
+      setAlignmentResult(null);
+    },
+    [raiseNodeStacking],
+  );
 
   const getReferenceRects = useCallback((): AlignmentRect[] => {
     const visibleViewport = toAlignmentViewport(canvasRef.current, getViewport());
@@ -367,7 +382,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeDoubleClick={handleNodeDoubleClick}
-          onNodeDragStart={clearAlignmentGuides}
+          onNodeDragStart={handleNodeDragStart}
           onNodeDrag={handleNodeDrag}
           onNodeDragStop={handleNodeDragStop}
           onPaneClick={handlePaneClick}
@@ -384,12 +399,15 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           selectionKeyCode={null}
           multiSelectionKeyCode="Shift"
           selectionMode={SelectionMode.Partial}
+          elevateNodesOnSelect={false}
+          zIndexMode="manual"
         >
           <Background variant={BackgroundVariant.Lines} gap={18} size={1} />
           <GroupOutlines
             groups={groups}
             nodes={nodes}
             selectedGroupId={selectedGroupId}
+            groupOutlineZIndexById={stackingZIndices.groupOutlineZIndexById}
             onGroupPointerDown={handleGroupPointerDown}
             onGroupPointerMove={handleGroupPointerMove}
             onGroupPointerUp={handleGroupPointerUp}

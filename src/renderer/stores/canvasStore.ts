@@ -3,9 +3,15 @@ import { create } from 'zustand';
 
 import type { JsonCanvasDocument } from '../../shared/json-canvas';
 import {
+  moveUnitToFront,
+  reconcileLayerOrder,
+  stackingUnitIdForNode,
+} from '../../shared/stacking-order';
+import {
   createMarkdownNodeAt,
   hydrateEdges,
   hydrateGroups,
+  hydrateLayerOrder,
   hydrateNodes,
   toJsonCanvasDocument,
   type CanvasGroup,
@@ -17,6 +23,7 @@ interface CanvasState {
   nodes: MarkdownFlowNode[];
   edges: MarkdownFlowEdge[];
   groups: CanvasGroup[];
+  layerOrder: string[];
   selectedNodeIds: string[];
   selectedGroupId: string | null;
   editingNodeId: string | null;
@@ -38,6 +45,8 @@ interface CanvasState {
   selectGroup: (groupId: string) => void;
   ungroupSelectedGroup: () => void;
   moveGroupBy: (groupId: string, delta: { x: number; y: number }) => void;
+  raiseNodeStacking: (nodeId: string) => void;
+  raiseStackingUnit: (unitId: string) => void;
   deleteSelectedNodes: () => void;
   deleteSelectedGroup: () => void;
   getJsonCanvasDocument: () => JsonCanvasDocument;
@@ -83,10 +92,47 @@ function removeNodeIdsFromGroups(
   });
 }
 
+function layerOrderFor(
+  layerOrder: readonly string[],
+  nodes: readonly MarkdownFlowNode[],
+  groups: readonly CanvasGroup[],
+): string[] {
+  return reconcileLayerOrder(
+    layerOrder,
+    nodes.map((node) => node.id),
+    groups,
+  );
+}
+
+function replaceGroupWithMembers(
+  layerOrder: readonly string[],
+  group: CanvasGroup,
+): string[] {
+  const nextLayerOrder: string[] = [];
+  let didReplaceGroup = false;
+
+  for (const unitId of layerOrder) {
+    if (unitId !== group.id) {
+      nextLayerOrder.push(unitId);
+      continue;
+    }
+
+    didReplaceGroup = true;
+    nextLayerOrder.push(...group.nodeIds);
+  }
+
+  if (!didReplaceGroup) {
+    nextLayerOrder.push(...group.nodeIds);
+  }
+
+  return nextLayerOrder;
+}
+
 export const useCanvasStore = create<CanvasState>()((set, get) => ({
   nodes: [],
   edges: [],
   groups: [],
+  layerOrder: [],
   selectedNodeIds: [],
   selectedGroupId: null,
   editingNodeId: null,
@@ -112,6 +158,7 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
 
     set({
       nodes,
+      layerOrder: layerOrderFor(currentState.layerOrder, nodes, currentState.groups),
       selectedNodeIds,
       selectedGroupId: hasSelectionChange ? null : currentState.selectedGroupId,
       editingNodeId,
@@ -126,18 +173,25 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
 
   createMarkdownNode: (position) => {
     const node = createMarkdownNodeAt(position);
+    const currentState = get();
+    const nodes = [
+      ...currentState.nodes.map((existingNode) => ({
+        ...existingNode,
+        selected: false,
+      })),
+      {
+        ...node,
+        selected: true,
+      },
+    ];
 
     set({
-      nodes: [
-        ...get().nodes.map((existingNode) => ({
-          ...existingNode,
-          selected: false,
-        })),
-        {
-          ...node,
-          selected: true,
-        },
-      ],
+      nodes,
+      layerOrder: layerOrderFor(
+        moveUnitToFront(currentState.layerOrder, node.id),
+        nodes,
+        currentState.groups,
+      ),
       selectedNodeIds: [node.id],
       selectedGroupId: null,
       editingNodeId: null,
@@ -322,10 +376,20 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
       id: crypto.randomUUID(),
       nodeIds: selectedNodeIds,
     };
+    const groups = [...currentState.groups, group];
+    const selectedNodeIdSet = new Set(selectedNodeIds);
 
     set({
       nodes: applySelectedNodeIds(currentState.nodes, []),
-      groups: [...currentState.groups, group],
+      groups,
+      layerOrder: layerOrderFor(
+        moveUnitToFront(
+          currentState.layerOrder.filter((unitId) => !selectedNodeIdSet.has(unitId)),
+          group.id,
+        ),
+        currentState.nodes,
+        groups,
+      ),
       selectedNodeIds: [],
       selectedGroupId: group.id,
       editingNodeId: null,
@@ -347,13 +411,25 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
   },
 
   ungroupSelectedGroup: () => {
-    const selectedGroupId = get().selectedGroupId;
+    const currentState = get();
+    const selectedGroupId = currentState.selectedGroupId;
     if (selectedGroupId === null) {
       return;
     }
 
+    const selectedGroup = currentState.groups.find((group) => group.id === selectedGroupId);
+    const groups = currentState.groups.filter((group) => group.id !== selectedGroupId);
+
     set({
-      groups: get().groups.filter((group) => group.id !== selectedGroupId),
+      groups,
+      layerOrder:
+        selectedGroup === undefined
+          ? layerOrderFor(currentState.layerOrder, currentState.nodes, groups)
+          : layerOrderFor(
+              replaceGroupWithMembers(currentState.layerOrder, selectedGroup),
+              currentState.nodes,
+              groups,
+            ),
       selectedGroupId: null,
     });
   },
@@ -389,19 +465,44 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
     });
   },
 
+  raiseStackingUnit: (unitId) => {
+    const currentState = get();
+    if (currentState.layerOrder[currentState.layerOrder.length - 1] === unitId) {
+      return;
+    }
+
+    set({
+      layerOrder: layerOrderFor(
+        moveUnitToFront(currentState.layerOrder, unitId),
+        currentState.nodes,
+        currentState.groups,
+      ),
+    });
+  },
+
+  raiseNodeStacking: (nodeId) => {
+    const currentState = get();
+    currentState.raiseStackingUnit(stackingUnitIdForNode(nodeId, currentState.groups));
+  },
+
   deleteSelectedNodes: () => {
-    const selectedNodeIds = new Set(get().selectedNodeIds);
+    const currentState = get();
+    const selectedNodeIds = new Set(currentState.selectedNodeIds);
 
     if (selectedNodeIds.size === 0) {
       return;
     }
 
+    const nodes = currentState.nodes.filter((node) => !selectedNodeIds.has(node.id));
+    const groups = removeNodeIdsFromGroups(currentState.groups, selectedNodeIds);
+
     set({
-      nodes: get().nodes.filter((node) => !selectedNodeIds.has(node.id)),
-      edges: get().edges.filter(
+      nodes,
+      edges: currentState.edges.filter(
         (edge) => !selectedNodeIds.has(edge.source) && !selectedNodeIds.has(edge.target),
       ),
-      groups: removeNodeIdsFromGroups(get().groups, selectedNodeIds),
+      groups,
+      layerOrder: layerOrderFor(currentState.layerOrder, nodes, groups),
       selectedNodeIds: [],
       selectedGroupId: null,
       editingNodeId: null,
@@ -418,12 +519,16 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
     }
 
     const memberNodeIds = new Set(selectedGroup.nodeIds);
+    const nodes = currentState.nodes.filter((node) => !memberNodeIds.has(node.id));
+    const groups = currentState.groups.filter((group) => group.id !== selectedGroup.id);
+
     set({
-      nodes: currentState.nodes.filter((node) => !memberNodeIds.has(node.id)),
+      nodes,
       edges: currentState.edges.filter(
         (edge) => !memberNodeIds.has(edge.source) && !memberNodeIds.has(edge.target),
       ),
-      groups: currentState.groups.filter((group) => group.id !== selectedGroup.id),
+      groups,
+      layerOrder: layerOrderFor(currentState.layerOrder, nodes, groups),
       selectedNodeIds: [],
       selectedGroupId: null,
       editingNodeId: null,
@@ -434,11 +539,13 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
 
   loadJsonCanvasDocument: (document) => {
     const nodes = hydrateNodes(document?.nodes);
+    const groups = hydrateGroups(document?.groups, nodes);
 
     set({
       nodes,
       edges: hydrateEdges(document?.edges),
-      groups: hydrateGroups(document?.groups, nodes),
+      groups,
+      layerOrder: hydrateLayerOrder(document?.layerOrder, nodes, groups),
       selectedNodeIds: [],
       selectedGroupId: null,
       editingNodeId: null,
