@@ -9,6 +9,7 @@ const CANVAS_SAVE_DEBOUNCE_MS = 750;
 export function useCanvasFilePersistence(): PersistenceStatus {
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
+  const groups = useCanvasStore((state) => state.groups);
   const hasLoadedCanvasRef = useRef(false);
   const lastSavedSerializedRef = useRef<string | null>(null);
   const saveInFlightRef = useRef<Promise<unknown> | null>(null);
@@ -168,7 +169,7 @@ export function useCanvasFilePersistence(): PersistenceStatus {
     return () => {
       window.clearTimeout(saveTimer);
     };
-  }, [edges, getSerializedCanvasDocument, nodes, saveIfDirty]);
+  }, [edges, getSerializedCanvasDocument, groups, nodes, saveIfDirty]);
 
   return status;
 }

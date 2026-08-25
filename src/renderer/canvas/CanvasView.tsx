@@ -29,13 +29,15 @@ import {
 import { CanvasPersistenceStatus, type PersistenceStatus } from './CanvasPersistenceStatus';
 import { GroupOutlines } from './GroupOutlines';
 import { MarkdownNode } from './MarkdownNode';
-import type { MarkdownFlowNode } from './react-flow-mapping';
+import {
+  MARKDOWN_NODE_MIN_HEIGHT,
+  MARKDOWN_NODE_MIN_WIDTH,
+  type MarkdownFlowNode,
+} from './react-flow-mapping';
 import { toCanvasNodeRect } from './react-flow-node-geometry';
 import { SelectionToolbar } from './SelectionToolbar';
 
 const ALIGNMENT_TOLERANCE_SCREEN_PIXELS = 6;
-const NODE_MIN_WIDTH = 220;
-const NODE_MIN_HEIGHT = 160;
 
 function isElementTarget(target: EventTarget | null): target is Element {
   return target instanceof Element;
@@ -266,8 +268,8 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           resizeStart.bounds,
           referenceRects,
           getFlowTolerance(),
-          NODE_MIN_WIDTH,
-          NODE_MIN_HEIGHT,
+          MARKDOWN_NODE_MIN_WIDTH,
+          MARKDOWN_NODE_MIN_HEIGHT,
         );
         const guides: AlignmentResult = {
           position: {

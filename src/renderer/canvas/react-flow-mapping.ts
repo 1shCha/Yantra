@@ -15,6 +15,9 @@ import {
 const NODE_WIDTH = 320;
 const NODE_HEIGHT = 220;
 
+export const MARKDOWN_NODE_MIN_WIDTH = 220;
+export const MARKDOWN_NODE_MIN_HEIGHT = 160;
+
 export interface MarkdownNodeData extends Record<string, unknown> {
   canvasType: typeof JSON_CANVAS_TEXT_NODE_TYPE;
   text: string;

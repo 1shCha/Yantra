@@ -8,16 +8,17 @@ import {
 
 import { useCanvasStore } from '../stores/canvasStore';
 import { useCanvasAlignment } from './canvas-alignment-context';
-import type { MarkdownNodeData } from './react-flow-mapping';
+import {
+  MARKDOWN_NODE_MIN_HEIGHT,
+  MARKDOWN_NODE_MIN_WIDTH,
+  type MarkdownNodeData,
+} from './react-flow-mapping';
 
 interface MarkdownNodeComponentProps {
   id: string;
   data: MarkdownNodeData;
   selected: boolean;
 }
-
-const NODE_MIN_WIDTH = 220;
-const NODE_MIN_HEIGHT = 160;
 
 function isSameGeometry(
   first: ResizeParamsWithDirection,
@@ -43,6 +44,7 @@ function focusEditorAtEnd(editor: HTMLTextAreaElement) {
 }
 
 function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProps) {
+  const nodeRef = useRef<HTMLElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isBodyScrollable, setIsBodyScrollable] = useState(false);
@@ -99,17 +101,6 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
     [isEditing],
   );
 
-  const handleSelectStart = useCallback(
-    (event: React.SyntheticEvent<HTMLElement>) => {
-      if (isEditorReady) {
-        return;
-      }
-
-      event.preventDefault();
-    },
-    [isEditorReady],
-  );
-
   useLayoutEffect(() => {
     if (!isEditing) {
       setIsEditorReady(false);
@@ -126,6 +117,22 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
       window.clearTimeout(timeoutId);
     };
   }, [isEditing]);
+
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (node === null || isEditorReady) {
+      return undefined;
+    }
+
+    const handleSelectStart = (event: Event) => {
+      event.preventDefault();
+    };
+
+    node.addEventListener('selectstart', handleSelectStart);
+    return () => {
+      node.removeEventListener('selectstart', handleSelectStart);
+    };
+  }, [isEditorReady]);
 
   useLayoutEffect(() => {
     if (!isEditorReady) {
@@ -219,16 +226,16 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
 
   return (
     <section
+      ref={nodeRef}
       className="markdown-node"
       data-editing={isEditing}
       onClickCapture={handleClickCapture}
       onPointerDownCapture={handlePointerDownCapture}
-      onSelectStart={handleSelectStart}
     >
       <NodeResizer
         isVisible={selected}
-        minWidth={NODE_MIN_WIDTH}
-        minHeight={NODE_MIN_HEIGHT}
+        minWidth={MARKDOWN_NODE_MIN_WIDTH}
+        minHeight={MARKDOWN_NODE_MIN_HEIGHT}
         handleClassName="markdown-node__resize-handle"
         lineClassName="markdown-node__resize-line"
         onResizeStart={handleResizeStart}
