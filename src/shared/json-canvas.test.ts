@@ -5,6 +5,7 @@ import {
   encodeJsonCanvasDocument,
   JSON_CANVAS_TEXT_NODE_TYPE,
 } from './json-canvas';
+import { tiptapDocFromPlainText } from './tiptap-document';
 
 describe('decodeJsonCanvasDocument', () => {
   it('parses a strict JSON Canvas file', () => {
@@ -40,7 +41,7 @@ describe('decodeJsonCanvasDocument', () => {
       type: JSON_CANVAS_TEXT_NODE_TYPE,
       x: 10,
       y: 20,
-      text: 'Hello',
+      doc: tiptapDocFromPlainText('Hello'),
       color: 'red',
     });
     expect(document.edges[0]?.fromNode).toBe('node-1');
@@ -68,7 +69,7 @@ describe('decodeJsonCanvasDocument', () => {
       y: 50,
       width: 400,
       height: 300,
-      text: 'From data.content',
+      doc: tiptapDocFromPlainText('From data.content'),
     });
     expect(document.nodes[0]?.id).toEqual(expect.any(String));
   });
@@ -88,7 +89,7 @@ describe('decodeJsonCanvasDocument', () => {
 
     const document = decodeJsonCanvasDocument(raw);
 
-    expect(document.nodes[0]?.text).toBe('Nested text');
+    expect(document.nodes[0]?.doc).toEqual(tiptapDocFromPlainText('Nested text'));
     expect(document.nodes[0]?.id).toEqual(expect.any(String));
   });
 
@@ -228,5 +229,36 @@ describe('encodeJsonCanvasDocument', () => {
     );
 
     expect(encodeJsonCanvasDocument(document)).toEqual(document);
+  });
+
+  it('persists a TipTap document with marks instead of a text string', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Hello', marks: [{ type: 'bold' }] }],
+        },
+      ],
+    };
+    const document = decodeJsonCanvasDocument(
+      JSON.stringify({
+        nodes: [
+          {
+            id: 'node-1',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 0,
+            y: 0,
+            width: 320,
+            height: 220,
+            doc,
+          },
+        ],
+        edges: [],
+      }),
+    );
+
+    expect(document.nodes[0]?.doc).toEqual(doc);
+    expect(encodeJsonCanvasDocument(document).nodes[0]?.doc).toEqual(doc);
   });
 });

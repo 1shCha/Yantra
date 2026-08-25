@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 import { reconcileLayerOrder } from './stacking-order';
+import {
+  tiptapDocFromPlainText,
+  tiptapDocSchema,
+  type TiptapDoc,
+} from './tiptap-document';
 
 export const JSON_CANVAS_TEXT_NODE_TYPE = 'text' as const;
 export const REACT_FLOW_TEXT_NODE_TYPE = 'markdownNode' as const;
@@ -20,6 +25,7 @@ const nodeDataInputSchema = z.object({
   text: z.string().optional(),
   content: z.string().optional(),
   color: z.string().optional(),
+  doc: z.unknown().optional(),
 });
 
 const nodePositionInputSchema = z.object({
@@ -48,6 +54,7 @@ const lenientNodeInputSchema = z.object({
     .optional(),
   style: nodeStyleInputSchema.optional(),
   text: z.string().optional(),
+  doc: z.unknown().optional(),
   data: nodeDataInputSchema.optional(),
   color: z.string().optional(),
 });
@@ -78,7 +85,7 @@ export const jsonCanvasNodeSchema = z.object({
   y: z.number().int(),
   width: z.number().int(),
   height: z.number().int(),
-  text: z.string(),
+  doc: tiptapDocSchema,
   color: z.string().optional(),
 });
 
@@ -131,7 +138,7 @@ function toCanvasInteger(value: number, fallback = 0): number {
   return Number.isFinite(value) ? Math.round(value) : fallback;
 }
 
-function getNodeText(input: LenientNodeInput): string {
+function getNodePlainText(input: LenientNodeInput): string {
   if (input.text !== undefined) {
     return input.text;
   }
@@ -145,6 +152,18 @@ function getNodeText(input: LenientNodeInput): string {
   }
 
   return '';
+}
+
+function getNodeDoc(input: LenientNodeInput): TiptapDoc {
+  const candidate = input.doc ?? input.data?.doc;
+  if (candidate !== undefined) {
+    const parsed = tiptapDocSchema.safeParse(candidate);
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+
+  return tiptapDocFromPlainText(getNodePlainText(input));
 }
 
 function getNodeWidth(input: LenientNodeInput): number {
@@ -183,7 +202,7 @@ function normalizeJsonCanvasTextNode(input: LenientNodeInput): JsonCanvasNode {
     y: toCanvasInteger(Number(input.y ?? input.position?.y)),
     width: toCanvasInteger(Number(input.width ?? input.style?.width), NODE_WIDTH),
     height: toCanvasInteger(Number(input.height ?? input.style?.height), NODE_HEIGHT),
-    text: getNodeText(input),
+    doc: getNodeDoc(input),
     color,
   };
 }
@@ -198,7 +217,7 @@ function normalizeReactFlowNodeToJsonCanvas(input: LenientNodeInput): JsonCanvas
     y: toCanvasInteger(Number(input.position?.y)),
     width: getNodeWidth(input),
     height: getNodeHeight(input),
-    text: getNodeText(input),
+    doc: getNodeDoc(input),
     color,
   };
 }

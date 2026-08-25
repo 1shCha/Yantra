@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { REACT_FLOW_TEXT_NODE_TYPE, JSON_CANVAS_TEXT_NODE_TYPE } from '../../shared/json-canvas';
+import { tiptapDocFromPlainText } from '../../shared/tiptap-document';
 import { toJsonCanvasDocument, type MarkdownFlowNode } from './react-flow-mapping';
 
 function createFlowNode(overrides: Partial<MarkdownFlowNode> = {}): MarkdownFlowNode {
@@ -10,8 +11,7 @@ function createFlowNode(overrides: Partial<MarkdownFlowNode> = {}): MarkdownFlow
     position: { x: 10, y: 20 },
     data: {
       canvasType: JSON_CANVAS_TEXT_NODE_TYPE,
-      text: 'Hello',
-      content: 'Hello',
+      doc: tiptapDocFromPlainText('Hello'),
     },
     style: {
       width: 320,

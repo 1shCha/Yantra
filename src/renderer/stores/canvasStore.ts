@@ -7,6 +7,7 @@ import {
   reconcileLayerOrder,
   stackingUnitIdForNode,
 } from '../../shared/stacking-order';
+import { isSameTiptapDoc, type TiptapDoc } from '../../shared/tiptap-document';
 import {
   createMarkdownNodeAt,
   hydrateEdges,
@@ -35,7 +36,7 @@ interface CanvasState {
     nodeId: string,
     geometry: { x: number; y: number; width: number; height: number },
   ) => void;
-  updateNodeContent: (nodeId: string, content: string) => void;
+  updateNodeDoc: (nodeId: string, doc: TiptapDoc) => void;
   selectNode: (nodeId: string) => void;
   toggleNodeSelection: (nodeId: string) => void;
   editNode: (nodeId: string) => void;
@@ -256,20 +257,21 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
     });
   },
 
-  updateNodeContent: (nodeId, content) => {
+  updateNodeDoc: (nodeId, doc) => {
     set({
-      nodes: get().nodes.map((node) =>
-        node.id === nodeId
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                text: content,
-                content,
-              },
-            }
-          : node,
-      ),
+      nodes: get().nodes.map((node) => {
+        if (node.id !== nodeId || isSameTiptapDoc(node.data.doc, doc)) {
+          return node;
+        }
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            doc,
+          },
+        };
+      }),
     });
   },
 

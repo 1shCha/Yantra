@@ -5,6 +5,7 @@ import {
   JSON_CANVAS_TEXT_NODE_TYPE,
   type JsonCanvasDocument,
 } from '../../shared/json-canvas';
+import { tiptapDocFromPlainText } from '../../shared/tiptap-document';
 import { useCanvasStore } from './canvasStore';
 
 const initialDocument = {
@@ -16,7 +17,7 @@ const initialDocument = {
       y: 20,
       width: 320,
       height: 220,
-      text: 'Moving',
+      doc: tiptapDocFromPlainText('Moving'),
     },
     {
       id: 'stationary-node',
@@ -25,7 +26,7 @@ const initialDocument = {
       y: 500,
       width: 320,
       height: 220,
-      text: 'Stationary',
+      doc: tiptapDocFromPlainText('Stationary'),
     },
   ],
   edges: [

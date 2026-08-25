@@ -12,6 +12,7 @@ import {
   type JsonCanvasNode,
 } from '../../shared/json-canvas';
 import { reconcileLayerOrder } from '../../shared/stacking-order';
+import { createEmptyTiptapDoc, type TiptapDoc } from '../../shared/tiptap-document';
 
 const NODE_WIDTH = 320;
 const NODE_HEIGHT = 220;
@@ -21,8 +22,7 @@ export const MARKDOWN_NODE_MIN_HEIGHT = 160;
 
 export interface MarkdownNodeData extends Record<string, unknown> {
   canvasType: typeof JSON_CANVAS_TEXT_NODE_TYPE;
-  text: string;
-  content: string;
+  doc: TiptapDoc;
   color?: string;
 }
 
@@ -60,8 +60,7 @@ function jsonCanvasNodeToReactFlowNode(node: JsonCanvasNode): MarkdownFlowNode {
     },
     data: {
       canvasType: node.type,
-      text: node.text,
-      content: node.text,
+      doc: node.doc,
       color: node.color,
     },
     style: {
@@ -97,7 +96,7 @@ function jsonCanvasNodeFromFlowNode(node: MarkdownFlowNode): JsonCanvasNode {
     y: toCanvasInteger(Number(node.position.y)),
     width: getFlowNodeWidth(node),
     height: getFlowNodeHeight(node),
-    text: node.data.content,
+    doc: node.data.doc,
     color: node.data.color,
   };
 }
@@ -140,7 +139,7 @@ export function createMarkdownNodeAt(position: { x: number; y: number }): Markdo
     y: toCanvasInteger(position.y - NODE_HEIGHT / 2),
     width: NODE_WIDTH,
     height: NODE_HEIGHT,
-    text: '',
+    doc: createEmptyTiptapDoc(),
   });
 }
 
