@@ -261,4 +261,115 @@ describe('encodeJsonCanvasDocument', () => {
     expect(document.nodes[0]?.doc).toEqual(doc);
     expect(encodeJsonCanvasDocument(document).nodes[0]?.doc).toEqual(doc);
   });
+
+  it('persists lists, task checked state, and code language', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [
+        {
+          type: 'orderedList',
+          attrs: { start: 1 },
+          content: [
+            {
+              type: 'listItem',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'First' }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'taskList',
+          content: [
+            {
+              type: 'taskItem',
+              attrs: { checked: false },
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'Todo' }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'codeBlock',
+          attrs: { language: 'javascript' },
+          content: [{ type: 'text', text: 'const x = 1' }],
+        },
+      ],
+    };
+    const document = decodeJsonCanvasDocument(
+      JSON.stringify({
+        nodes: [
+          {
+            id: 'node-1',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 0,
+            y: 0,
+            width: 320,
+            height: 220,
+            doc,
+          },
+        ],
+        edges: [],
+      }),
+    );
+
+    expect(document.nodes[0]?.doc).toEqual(doc);
+    expect(encodeJsonCanvasDocument(document).nodes[0]?.doc).toEqual(doc);
+  });
+
+  it('persists highlight, paragraph alignment, and links', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [
+        {
+          type: 'paragraph',
+          attrs: { textAlign: 'right' },
+          content: [
+            {
+              type: 'text',
+              text: 'Go',
+              marks: [
+                { type: 'highlight' },
+                {
+                  type: 'link',
+                  attrs: {
+                    href: 'https://example.com',
+                    target: '_blank',
+                    rel: 'noopener noreferrer nofollow',
+                    class: 'nodrag',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const document = decodeJsonCanvasDocument(
+      JSON.stringify({
+        nodes: [
+          {
+            id: 'node-1',
+            type: JSON_CANVAS_TEXT_NODE_TYPE,
+            x: 0,
+            y: 0,
+            width: 320,
+            height: 220,
+            doc,
+          },
+        ],
+        edges: [],
+      }),
+    );
+
+    expect(document.nodes[0]?.doc).toEqual(doc);
+    expect(encodeJsonCanvasDocument(document).nodes[0]?.doc).toEqual(doc);
+  });
 });

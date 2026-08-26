@@ -134,9 +134,9 @@ textarea {
   outline: none;
 }
 
+.editor-toolbar,
 .selection-toolbar {
   position: absolute;
-  bottom: 18px;
   left: 50%;
   z-index: 2;
   display: flex;
@@ -148,6 +148,18 @@ textarea {
   border-radius: 8px;
   background: rgba(250, 252, 255, 0.96);
   box-shadow: 0 14px 34px rgba(48, 47, 40, 0.16);
+  padding: 8px 10px;
+}
+
+.editor-toolbar {
+  top: 18px;
+  flex-wrap: wrap;
+  max-width: min(960px, calc(100vw - 36px));
+  justify-content: center;
+}
+
+.selection-toolbar {
+  bottom: 18px;
   padding: 8px 10px 8px 14px;
 }
 
@@ -157,6 +169,7 @@ textarea {
   font-weight: 700;
 }
 
+.editor-toolbar__action,
 .selection-toolbar__action {
   border: 1px solid rgba(43, 43, 43, 0.28);
   border-radius: 6px;
@@ -168,8 +181,64 @@ textarea {
   font-weight: 700;
 }
 
+.editor-toolbar__action:hover,
 .selection-toolbar__action:hover {
   background: rgba(43, 43, 43, 0.07);
+}
+
+.editor-toolbar__action[aria-pressed='true'] {
+  background: rgba(43, 43, 43, 0.12);
+}
+
+.editor-toolbar__action:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.editor-toolbar__action:disabled:hover {
+  background: transparent;
+}
+
+.editor-toolbar__select {
+  border: 1px solid rgba(43, 43, 43, 0.28);
+  border-radius: 6px;
+  background: transparent;
+  color: #2b2b2b;
+  cursor: pointer;
+  padding: 7px 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.editor-toolbar__select:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.editor-toolbar__select:focus-visible {
+  outline: 2px solid #2b2b2b;
+  outline-offset: 2px;
+}
+
+.editor-toolbar__link-popover {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-toolbar__link-input {
+  width: 180px;
+  border: 1px solid rgba(43, 43, 43, 0.28);
+  border-radius: 6px;
+  background: transparent;
+  color: #2b2b2b;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+
+.editor-toolbar__link-input:focus-visible {
+  outline: 2px solid #2b2b2b;
+  outline-offset: 2px;
 }
 
 .selection-toolbar__delete {
@@ -187,6 +256,7 @@ textarea {
   background: #982929;
 }
 
+.editor-toolbar__action:focus-visible,
 .selection-toolbar__action:focus-visible,
 .selection-toolbar__delete:focus-visible {
   outline: 2px solid #2b2b2b;
@@ -311,6 +381,14 @@ textarea {
   line-height: 1.45;
 }
 
+.markdown-node[data-editing='true'],
+.markdown-node[data-editing='true'] .markdown-node__body,
+.markdown-node[data-editing='true'] .markdown-node__editor,
+.markdown-node[data-editing='true'] .markdown-node__prose,
+.react-flow__node.draggable:has(.markdown-node[data-editing='true']) {
+  cursor: text;
+}
+
 .markdown-node__body {
   cursor: grab;
   overflow: hidden;
@@ -383,6 +461,86 @@ textarea {
 .markdown-node__body h6,
 .markdown-node__prose h6 {
   font-size: 1.05em;
+}
+
+.markdown-node__body ul,
+.markdown-node__prose ul,
+.markdown-node__body ol,
+.markdown-node__prose ol {
+  margin: 0 0 0.45em;
+  padding-left: 1.3em;
+}
+
+.markdown-node__body ul:last-child,
+.markdown-node__prose ul:last-child,
+.markdown-node__body ol:last-child,
+.markdown-node__prose ol:last-child,
+.markdown-node__body pre:last-child,
+.markdown-node__prose pre:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-node__body li,
+.markdown-node__prose li {
+  margin: 0 0 0.15em;
+}
+
+.markdown-node__body ul[data-type='taskList'],
+.markdown-node__prose ul[data-type='taskList'] {
+  padding-left: 0;
+  list-style: none;
+}
+
+.markdown-node__body ul[data-type='taskList'] li,
+.markdown-node__prose ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.markdown-node__body ul[data-type='taskList'] label,
+.markdown-node__prose ul[data-type='taskList'] label {
+  display: flex;
+  margin-top: 0.25em;
+}
+
+.markdown-node__preview input,
+.markdown-node__preview label {
+  pointer-events: none;
+}
+
+.markdown-node__body mark,
+.markdown-node__prose mark {
+  background: #f3e2a0;
+  border-radius: 2px;
+  color: inherit;
+}
+
+.markdown-node__body a,
+.markdown-node__prose a {
+  color: #1d4f91;
+  text-decoration: underline;
+}
+
+.markdown-node__preview a {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.markdown-node__body pre,
+.markdown-node__prose pre {
+  margin: 0 0 0.45em;
+  overflow: auto;
+  border-radius: 6px;
+  background: #ecece8;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.markdown-node__body pre code,
+.markdown-node__prose pre code {
+  font: inherit;
 }
 
 .markdown-node__prose p.is-editor-empty:first-child::before,

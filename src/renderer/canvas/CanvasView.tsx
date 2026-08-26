@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Controls,
   ReactFlow,
@@ -26,7 +26,9 @@ import {
   type NodeGeometry,
 } from './canvas-alignment-context';
 import { CanvasBackdrop } from './CanvasBackdrop';
+import { CanvasEditorProvider } from './canvas-editor-context';
 import { CanvasPersistenceStatus, type PersistenceStatus } from './CanvasPersistenceStatus';
+import { EditorToolbar } from './EditorToolbar';
 import { GroupOutlines } from './GroupOutlines';
 import { MarkdownNode } from './MarkdownNode';
 import {
@@ -84,6 +86,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   const layerOrder = useCanvasStore((state) => state.layerOrder);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const selectedGroupId = useCanvasStore((state) => state.selectedGroupId);
+  const editingNodeId = useCanvasStore((state) => state.editingNodeId);
   const onNodesChange = useCanvasStore((state) => state.onNodesChange);
   const onEdgesChange = useCanvasStore((state) => state.onEdgesChange);
   const createMarkdownNode = useCanvasStore((state) => state.createMarkdownNode);
@@ -101,6 +104,21 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   const { getViewport, getZoom, screenToFlowPosition } = useReactFlow();
   const [alignmentResult, setAlignmentResult] = useState<AlignmentResult | null>(null);
   const resizeStartBoundsRef = useRef<{ bounds: NodeGeometry; nodeId: string } | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') {
+        return;
+      }
+
+      event.preventDefault();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   const nodeTypes = useMemo(
     () => ({
@@ -363,16 +381,20 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
 
   return (
     <main ref={canvasRef} className="app-shell">
-      <CanvasAlignmentProvider value={alignmentContextValue}>
-        <SelectionToolbar
-          canGroupSelectedNodes={canGroupSelectedNodes}
-          isGroupSelected={selectedGroupId !== null}
-          selectedNodeCount={selectedNodeIds.length}
-          onDeleteSelectedGroup={deleteSelectedGroup}
-          onDeleteSelectedNodes={deleteSelectedNodes}
-          onGroupSelectedNodes={groupSelectedNodes}
-          onUngroupSelectedGroup={ungroupSelectedGroup}
-        />
+      <CanvasEditorProvider>
+        <CanvasAlignmentProvider value={alignmentContextValue}>
+        {editingNodeId === null ? (
+          <SelectionToolbar
+            canGroupSelectedNodes={canGroupSelectedNodes}
+            isGroupSelected={selectedGroupId !== null}
+            selectedNodeCount={selectedNodeIds.length}
+            onDeleteSelectedGroup={deleteSelectedGroup}
+            onDeleteSelectedNodes={deleteSelectedNodes}
+            onGroupSelectedNodes={groupSelectedNodes}
+            onUngroupSelectedGroup={ungroupSelectedGroup}
+          />
+        ) : null}
+        <EditorToolbar />
         <CanvasPersistenceStatus status={persistenceStatus} />
         <ReactFlow
           nodes={nodesWithInteractionState}
@@ -394,6 +416,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           zoomOnDoubleClick={false}
           panOnDrag={false}
           panOnScroll
+          autoPanOnNodeFocus={false}
           selectionOnDrag
           selectionKeyCode={null}
           multiSelectionKeyCode="Shift"
@@ -418,7 +441,8 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           />
           <Controls position="bottom-right" />
         </ReactFlow>
-      </CanvasAlignmentProvider>
+        </CanvasAlignmentProvider>
+      </CanvasEditorProvider>
     </main>
   );
 }

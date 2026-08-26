@@ -10,6 +10,7 @@ import {
 import { isTiptapDocEmpty, tiptapDocSchema, type TiptapDoc } from '../../shared/tiptap-document';
 import { useCanvasStore } from '../stores/canvasStore';
 import { useCanvasAlignment } from './canvas-alignment-context';
+import { useCanvasEditor } from './canvas-editor-context';
 import {
   MARKDOWN_NODE_MIN_HEIGHT,
   MARKDOWN_NODE_MIN_WIDTH,
@@ -45,9 +46,27 @@ function isElementTarget(target: EventTarget | null): target is Element {
   return target instanceof Element;
 }
 
+function isHttpHref(href: string): boolean {
+  try {
+    const parsed = new URL(href);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function openPreviewHref(href: string) {
+  if (!isHttpHref(href)) {
+    return;
+  }
+
+  window.open(href, '_blank', 'noopener,noreferrer');
+}
+
 function MarkdownNodeEditor({ doc, selected, onDocChange }: MarkdownNodeEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [isEditorScrollable, setIsEditorScrollable] = useState(false);
+  const { setEditor } = useCanvasEditor();
   const editor = useEditor({
     immediatelyRender: false,
     extensions: canvasTiptapEditorExtensions,
@@ -73,6 +92,17 @@ function MarkdownNodeEditor({ doc, selected, onDocChange }: MarkdownNodeEditorPr
 
     editor.commands.focus('end');
   }, [editor]);
+
+  useEffect(() => {
+    if (editor === null) {
+      return undefined;
+    }
+
+    setEditor(editor);
+    return () => {
+      setEditor(null);
+    };
+  }, [editor, setEditor]);
 
   useEffect(() => {
     const container = editorContainerRef.current;
@@ -134,6 +164,11 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
         return;
       }
 
+      if (event.target.closest('.markdown-node__preview a') !== null) {
+        event.stopPropagation();
+        return;
+      }
+
       if (
         isEditing ||
         event.target.closest('.markdown-node__resize-handle') ||
@@ -155,6 +190,16 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
 
   const handleClickCapture = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
+      if (!isEditing && isElementTarget(event.target)) {
+        const link = event.target.closest('.markdown-node__preview a');
+        if (link instanceof HTMLAnchorElement) {
+          event.preventDefault();
+          event.stopPropagation();
+          openPreviewHref(link.href);
+          return;
+        }
+      }
+
       if (!event.shiftKey || isEditing) {
         return;
       }

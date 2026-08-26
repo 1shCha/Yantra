@@ -1,7 +1,16 @@
 import { z } from 'zod';
 
 const tiptapNodeAttrsSchema = z.object({
+  checked: z.boolean().optional(),
+  class: z.string().nullable().optional(),
+  color: z.string().nullable().optional(),
+  href: z.string().nullable().optional(),
+  language: z.string().nullable().optional(),
   level: z.number().int().min(1).max(6).optional(),
+  rel: z.string().nullable().optional(),
+  start: z.number().int().optional(),
+  target: z.string().nullable().optional(),
+  textAlign: z.string().nullable().optional(),
 });
 
 const tiptapMarkSchema = z.object({
@@ -67,7 +76,13 @@ export function tiptapDocFromPlainText(text: string): TiptapDoc {
 }
 
 function isTiptapNodeEmpty(node: TiptapNode): boolean {
-  if (node.type === 'hardBreak') {
+  if (
+    node.type === 'bulletList' ||
+    node.type === 'codeBlock' ||
+    node.type === 'hardBreak' ||
+    node.type === 'orderedList' ||
+    node.type === 'taskList'
+  ) {
     return false;
   }
 
