@@ -24,6 +24,7 @@ export interface MarkdownNodeData extends Record<string, unknown> {
   canvasType: typeof JSON_CANVAS_TEXT_NODE_TYPE;
   doc: TiptapDoc;
   color?: string;
+  showCreatePlaceholder?: boolean;
 }
 
 export type MarkdownFlowNode = Node<MarkdownNodeData, typeof REACT_FLOW_TEXT_NODE_TYPE>;
@@ -132,7 +133,7 @@ function jsonCanvasEdgeFromFlowEdge(edge: MarkdownFlowEdge): JsonCanvasEdge {
 }
 
 export function createMarkdownNodeAt(position: { x: number; y: number }): MarkdownFlowNode {
-  return jsonCanvasNodeToReactFlowNode({
+  const node = jsonCanvasNodeToReactFlowNode({
     id: crypto.randomUUID(),
     type: JSON_CANVAS_TEXT_NODE_TYPE,
     x: toCanvasInteger(position.x - NODE_WIDTH / 2),
@@ -141,6 +142,14 @@ export function createMarkdownNodeAt(position: { x: number; y: number }): Markdo
     height: NODE_HEIGHT,
     doc: createEmptyTiptapDoc(),
   });
+
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      showCreatePlaceholder: true,
+    },
+  };
 }
 
 export function toJsonCanvasDocument(state: CanvasFlowState): JsonCanvasDocument {

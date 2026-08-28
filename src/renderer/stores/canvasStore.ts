@@ -37,6 +37,7 @@ interface CanvasState {
     geometry: { x: number; y: number; width: number; height: number },
   ) => void;
   updateNodeDoc: (nodeId: string, doc: TiptapDoc) => void;
+  dismissCreatePlaceholder: (nodeId: string) => void;
   selectNode: (nodeId: string) => void;
   toggleNodeSelection: (nodeId: string) => void;
   editNode: (nodeId: string) => void;
@@ -269,6 +270,24 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
           data: {
             ...node.data,
             doc,
+          },
+        };
+      }),
+    });
+  },
+
+  dismissCreatePlaceholder: (nodeId) => {
+    set({
+      nodes: get().nodes.map((node) => {
+        if (node.id !== nodeId || node.data.showCreatePlaceholder !== true) {
+          return node;
+        }
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            showCreatePlaceholder: false,
           },
         };
       }),

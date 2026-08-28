@@ -2,6 +2,10 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { EditorContent, useEditor } from '@tiptap/react';
 import {
   NodeResizer,
+  NodeToolbar,
+  Position,
+  useInternalNode,
+  useViewport,
   type ResizeDragEvent,
   type ResizeParams,
   type ResizeParamsWithDirection,
@@ -11,12 +15,17 @@ import { isTiptapDocEmpty, tiptapDocSchema, type TiptapDoc } from '../../shared/
 import { useCanvasStore } from '../stores/canvasStore';
 import { useCanvasAlignment } from './canvas-alignment-context';
 import { useCanvasEditor } from './canvas-editor-context';
+import { EditorToolbar } from './EditorToolbar';
+import { lastMeaningfulCaretPos } from './last-meaningful-caret-pos';
 import {
   MARKDOWN_NODE_MIN_HEIGHT,
   MARKDOWN_NODE_MIN_WIDTH,
   type MarkdownNodeData,
 } from './react-flow-mapping';
 import { canvasTiptapEditorExtensions, renderTiptapDocToHtml } from './tiptap-schema';
+
+const EDITOR_TOOLBAR_FLIP_SPACE_PX = 56;
+const EDITOR_TOOLBAR_Z_INDEX = 10_000;
 
 interface MarkdownNodeComponentProps {
   id: string;
@@ -26,7 +35,9 @@ interface MarkdownNodeComponentProps {
 
 interface MarkdownNodeEditorProps {
   doc: TiptapDoc;
+  nodeId: string;
   selected: boolean;
+  showCreatePlaceholder: boolean;
   onDocChange: (doc: TiptapDoc) => void;
 }
 
@@ -63,10 +74,21 @@ function openPreviewHref(href: string) {
   window.open(href, '_blank', 'noopener,noreferrer');
 }
 
-function MarkdownNodeEditor({ doc, selected, onDocChange }: MarkdownNodeEditorProps) {
+function stopToolbarPropagation(event: { stopPropagation: () => void }) {
+  event.stopPropagation();
+}
+
+function MarkdownNodeEditor({
+  doc,
+  nodeId,
+  selected,
+  showCreatePlaceholder,
+  onDocChange,
+}: MarkdownNodeEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [isEditorScrollable, setIsEditorScrollable] = useState(false);
   const { setEditor } = useCanvasEditor();
+  const dismissCreatePlaceholder = useCanvasStore((state) => state.dismissCreatePlaceholder);
   const editor = useEditor({
     immediatelyRender: false,
     extensions: canvasTiptapEditorExtensions,
@@ -77,21 +99,18 @@ function MarkdownNodeEditor({ doc, selected, onDocChange }: MarkdownNodeEditorPr
         spellcheck: 'true',
       },
     },
+    onCreate: ({ editor: currentEditor }) => {
+      const pos = lastMeaningfulCaretPos(currentEditor.state.doc);
+      currentEditor.chain().setTextSelection(pos).focus().run();
+    },
     onUpdate: ({ editor: currentEditor }) => {
       const parsed = tiptapDocSchema.safeParse(currentEditor.getJSON());
       if (parsed.success) {
         onDocChange(parsed.data);
+        dismissCreatePlaceholder(nodeId);
       }
     },
   });
-
-  useLayoutEffect(() => {
-    if (editor === null) {
-      return;
-    }
-
-    editor.commands.focus('end');
-  }, [editor]);
 
   useEffect(() => {
     if (editor === null) {
@@ -101,8 +120,9 @@ function MarkdownNodeEditor({ doc, selected, onDocChange }: MarkdownNodeEditorPr
     setEditor(editor);
     return () => {
       setEditor(null);
+      dismissCreatePlaceholder(nodeId);
     };
-  }, [editor, setEditor]);
+  }, [dismissCreatePlaceholder, editor, nodeId, setEditor]);
 
   useEffect(() => {
     const container = editorContainerRef.current;
@@ -131,6 +151,7 @@ function MarkdownNodeEditor({ doc, selected, onDocChange }: MarkdownNodeEditorPr
       className={`markdown-node__editor nodrag ${
         selected && isEditorScrollable ? 'nowheel' : ''
       }`}
+      data-create-placeholder={showCreatePlaceholder ? 'true' : 'false'}
     >
       <EditorContent editor={editor} />
     </div>
@@ -150,6 +171,15 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
     useCanvasAlignment();
   const previewHtml = useMemo(() => renderTiptapDocToHtml(data.doc), [data.doc]);
   const isPreviewEmpty = isTiptapDocEmpty(data.doc);
+  const viewport = useViewport();
+  const internalNode = useInternalNode(id);
+  const nodeScreenTop =
+    internalNode === undefined
+      ? EDITOR_TOOLBAR_FLIP_SPACE_PX
+      : internalNode.internals.positionAbsolute.y * viewport.zoom + viewport.y;
+  const toolbarPosition =
+    nodeScreenTop < EDITOR_TOOLBAR_FLIP_SPACE_PX ? Position.Bottom : Position.Top;
+  const menuSide = toolbarPosition === Position.Top ? 'below' : 'above';
 
   const handleDocChange = useCallback(
     (doc: TiptapDoc) => {
@@ -300,41 +330,61 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
   }, [clearAlignmentGuides]);
 
   return (
-    <section
-      ref={nodeRef}
-      className="markdown-node"
-      data-editing={isEditing}
-      onClickCapture={handleClickCapture}
-      onPointerDownCapture={handlePointerDownCapture}
-    >
-      <NodeResizer
-        isVisible={selected}
-        minWidth={MARKDOWN_NODE_MIN_WIDTH}
-        minHeight={MARKDOWN_NODE_MIN_HEIGHT}
-        handleClassName="markdown-node__resize-handle"
-        lineClassName="markdown-node__resize-line"
-        onResizeStart={handleResizeStart}
-        onResizeEnd={handleResizeEnd}
-        shouldResize={handleShouldResize}
-      />
-      {isEditorReady ? (
-        <MarkdownNodeEditor doc={data.doc} selected={selected} onDocChange={handleDocChange} />
-      ) : (
-        <div
-          ref={bodyRef}
-          className={`markdown-node__body ${selected && isBodyScrollable ? 'nowheel' : ''}`}
-        >
-          {isPreviewEmpty ? (
-            <span className="markdown-node__placeholder">Click to select</span>
-          ) : (
-            <div
-              className="markdown-node__preview"
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-            />
-          )}
-        </div>
-      )}
-    </section>
+    <>
+      <NodeToolbar
+        isVisible={isEditing && isEditorReady}
+        position={toolbarPosition}
+        align="center"
+        offset={8}
+        className="nodrag nopan nowheel"
+        style={{ zIndex: EDITOR_TOOLBAR_Z_INDEX }}
+        onPointerDown={stopToolbarPropagation}
+        onDoubleClick={stopToolbarPropagation}
+      >
+        <EditorToolbar menuSide={menuSide} />
+      </NodeToolbar>
+      <section
+        ref={nodeRef}
+        className="markdown-node"
+        data-editing={isEditing}
+        onClickCapture={handleClickCapture}
+        onPointerDownCapture={handlePointerDownCapture}
+      >
+        <NodeResizer
+          isVisible={selected}
+          minWidth={MARKDOWN_NODE_MIN_WIDTH}
+          minHeight={MARKDOWN_NODE_MIN_HEIGHT}
+          handleClassName="markdown-node__resize-handle"
+          lineClassName="markdown-node__resize-line"
+          onResizeStart={handleResizeStart}
+          onResizeEnd={handleResizeEnd}
+          shouldResize={handleShouldResize}
+        />
+        {isEditorReady ? (
+          <MarkdownNodeEditor
+            doc={data.doc}
+            nodeId={id}
+            selected={selected}
+            showCreatePlaceholder={data.showCreatePlaceholder === true}
+            onDocChange={handleDocChange}
+          />
+        ) : (
+          <div
+            ref={bodyRef}
+            className={`markdown-node__body ${selected && isBodyScrollable ? 'nowheel' : ''}`}
+          >
+            {isPreviewEmpty ? (
+              <span className="markdown-node__placeholder">Click to select</span>
+            ) : (
+              <div
+                className="markdown-node__preview"
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
+            )}
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 

@@ -42,6 +42,7 @@ export const canvasTiptapEditorExtensions = [
   ...canvasTiptapSchemaExtensions,
   Placeholder.configure({
     placeholder: 'Type…',
+    includeChildren: true,
   }),
 ];
 

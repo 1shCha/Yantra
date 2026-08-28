@@ -263,3 +263,29 @@ describe('stacking order', () => {
     expect(useCanvasStore.getState().layerOrder).toEqual([createdNodeId, groupId]);
   });
 });
+
+describe('create placeholder', () => {
+  beforeEach(() => {
+    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
+  });
+
+  afterEach(() => {
+    useCanvasStore.getState().loadJsonCanvasDocument(null);
+  });
+
+  it('clears the one-time empty-editor placeholder after first edit', () => {
+    useCanvasStore.getState().createMarkdownNode({ x: 50, y: 60 });
+    const createdNodeId = useCanvasStore.getState().selectedNodeIds[0];
+    expect(createdNodeId).toEqual(expect.any(String));
+    expect(
+      useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)?.data
+        .showCreatePlaceholder,
+    ).toBe(true);
+
+    useCanvasStore.getState().dismissCreatePlaceholder(createdNodeId ?? '');
+    expect(
+      useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)?.data
+        .showCreatePlaceholder,
+    ).toBe(false);
+  });
+});

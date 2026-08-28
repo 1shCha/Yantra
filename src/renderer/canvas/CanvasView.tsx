@@ -28,7 +28,6 @@ import {
 import { CanvasBackdrop } from './CanvasBackdrop';
 import { CanvasEditorProvider } from './canvas-editor-context';
 import { CanvasPersistenceStatus, type PersistenceStatus } from './CanvasPersistenceStatus';
-import { EditorToolbar } from './EditorToolbar';
 import { GroupOutlines } from './GroupOutlines';
 import { MarkdownNode } from './MarkdownNode';
 import {
@@ -135,7 +134,9 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
 
       if (
         event.target.closest('.react-flow__node') ||
-        event.target.closest('.react-flow__controls')
+        event.target.closest('.react-flow__controls') ||
+        event.target.closest('.react-flow__node-toolbar') ||
+        event.target.closest('.editor-toolbar')
       ) {
         return;
       }
@@ -394,7 +395,6 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
             onUngroupSelectedGroup={ungroupSelectedGroup}
           />
         ) : null}
-        <EditorToolbar />
         <CanvasPersistenceStatus status={persistenceStatus} />
         <ReactFlow
           nodes={nodesWithInteractionState}

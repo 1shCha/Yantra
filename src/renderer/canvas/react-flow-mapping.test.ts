@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { REACT_FLOW_TEXT_NODE_TYPE, JSON_CANVAS_TEXT_NODE_TYPE } from '../../shared/json-canvas';
 import { tiptapDocFromPlainText } from '../../shared/tiptap-document';
-import { toJsonCanvasDocument, type MarkdownFlowNode } from './react-flow-mapping';
+import { toJsonCanvasDocument, createMarkdownNodeAt, type MarkdownFlowNode } from './react-flow-mapping';
 
 function createFlowNode(overrides: Partial<MarkdownFlowNode> = {}): MarkdownFlowNode {
   return {
@@ -53,5 +53,20 @@ describe('toJsonCanvasDocument', () => {
 
     expect(document.nodes[0]?.width).toBe(410);
     expect(document.nodes[0]?.height).toBe(290);
+  });
+});
+
+describe('createMarkdownNodeAt', () => {
+  it('marks a new node for a one-time empty-editor placeholder and does not persist that mark', () => {
+    const node = createMarkdownNodeAt({ x: 100, y: 80 });
+
+    expect(node.data.showCreatePlaceholder).toBe(true);
+    expect(
+      toJsonCanvasDocument({
+        nodes: [node],
+        edges: [],
+        groups: [],
+      }).nodes[0],
+    ).not.toHaveProperty('showCreatePlaceholder');
   });
 });
