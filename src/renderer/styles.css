@@ -39,9 +39,6 @@ textarea {
   position: absolute;
   pointer-events: none;
   background-color: #fafcff;
-  background-image:
-    linear-gradient(to right, rgba(32, 32, 29, 0.1) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(32, 32, 29, 0.1) 1px, transparent 1px);
 }
 
 .alignment-guide {

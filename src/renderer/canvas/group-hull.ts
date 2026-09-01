@@ -1,109 +1,31 @@
 import type { CanvasNodeRect } from './react-flow-node-geometry';
+import { traceOuterBoundary, type HullPoint } from './group-outline-boundary';
+import { closeOrthogonalInroads } from './group-outline-closure';
+import {
+  createCompressedCellGrid,
+  createFilledAreaIndex,
+  filledAreaWithinRect,
+  type AxisAlignedRect,
+  type FilledAreaIndex,
+} from './group-outline-grid';
 
-export interface HullPoint {
-  x: number;
-  y: number;
-}
-
-interface AxisAlignedRect {
-  bottom: number;
-  left: number;
-  right: number;
-  top: number;
-}
+export type { HullPoint } from './group-outline-boundary';
 
 interface MemberOutlineRect extends AxisAlignedRect {
   id: string;
 }
 
+type ConnectionRects =
+  | readonly []
+  | readonly [AxisAlignedRect]
+  | readonly [AxisAlignedRect, AxisAlignedRect];
+
 interface RectConnection {
   addedArea: number;
   distance: number;
   key: string;
-  rects: AxisAlignedRect[];
+  rects: ConnectionRects;
   targetIndex: number;
-}
-
-interface BoundaryEdge {
-  end: HullPoint;
-  start: HullPoint;
-}
-
-function crossProduct(origin: HullPoint, first: HullPoint, second: HullPoint): number {
-  return (
-    (first.x - origin.x) * (second.y - origin.y) -
-    (first.y - origin.y) * (second.x - origin.x)
-  );
-}
-
-function appendHullPoint(hull: HullPoint[], point: HullPoint) {
-  while (hull.length >= 2) {
-    const previous = hull[hull.length - 1];
-    const beforePrevious = hull[hull.length - 2];
-
-    if (
-      previous === undefined ||
-      beforePrevious === undefined ||
-      crossProduct(beforePrevious, previous, point) > 0
-    ) {
-      break;
-    }
-
-    hull.pop();
-  }
-
-  hull.push(point);
-}
-
-function paddedCorners(rect: CanvasNodeRect, padding: number): HullPoint[] {
-  const left = rect.x - padding;
-  const top = rect.y - padding;
-  const right = rect.x + rect.width + padding;
-  const bottom = rect.y + rect.height + padding;
-
-  return [
-    { x: left, y: top },
-    { x: right, y: top },
-    { x: right, y: bottom },
-    { x: left, y: bottom },
-  ];
-}
-
-export function calculateGroupHull(
-  memberRects: readonly CanvasNodeRect[],
-  padding: number,
-): HullPoint[] {
-  const effectivePadding = Math.max(0, padding);
-  const uniquePoints = new Map<string, HullPoint>();
-
-  for (const rect of memberRects) {
-    for (const point of paddedCorners(rect, effectivePadding)) {
-      uniquePoints.set(`${point.x}:${point.y}`, point);
-    }
-  }
-
-  const points = Array.from(uniquePoints.values()).sort(
-    (first, second) => first.x - second.x || first.y - second.y,
-  );
-
-  if (points.length <= 1) {
-    return points;
-  }
-
-  const lowerHull: HullPoint[] = [];
-  for (const point of points) {
-    appendHullPoint(lowerHull, point);
-  }
-
-  const upperHull: HullPoint[] = [];
-  for (let index = points.length - 1; index >= 0; index -= 1) {
-    const point = points[index];
-    if (point !== undefined) {
-      appendHullPoint(upperHull, point);
-    }
-  }
-
-  return [...lowerHull.slice(0, -1), ...upperHull.slice(0, -1)];
 }
 
 function toPaddedRect(rect: CanvasNodeRect, padding: number): MemberOutlineRect {
@@ -142,18 +64,21 @@ function createRect(
   return { bottom, left, right, top };
 }
 
-function compactRects(rects: Array<AxisAlignedRect | null>): AxisAlignedRect[] {
-  return rects.filter((rect): rect is AxisAlignedRect => rect !== null);
-}
+function compactConnectionRects(
+  first: AxisAlignedRect | null,
+  second: AxisAlignedRect | null,
+): ConnectionRects {
+  if (first === null) {
+    return second === null ? [] : [second];
+  }
 
-function connectionArea(rects: readonly AxisAlignedRect[]): number {
-  return rects.reduce((total, rect) => total + rectArea(rect), 0);
+  return second === null ? [first] : [first, second];
 }
 
 function createHorizontalThenVerticalConnection(
   source: MemberOutlineRect,
   target: MemberOutlineRect,
-): AxisAlignedRect[] {
+): ConnectionRects {
   const horizontal =
     target.left >= source.right
       ? createRect(source.right, source.top, target.right, source.bottom)
@@ -163,13 +88,13 @@ function createHorizontalThenVerticalConnection(
       ? createRect(target.left, source.bottom, target.right, target.top)
       : createRect(target.left, target.bottom, target.right, source.top);
 
-  return compactRects([horizontal, vertical]);
+  return compactConnectionRects(horizontal, vertical);
 }
 
 function createVerticalThenHorizontalConnection(
   source: MemberOutlineRect,
   target: MemberOutlineRect,
-): AxisAlignedRect[] {
+): ConnectionRects {
   const vertical =
     target.top >= source.bottom
       ? createRect(source.left, source.bottom, source.right, target.bottom)
@@ -179,13 +104,13 @@ function createVerticalThenHorizontalConnection(
       ? createRect(source.right, target.top, target.left, target.bottom)
       : createRect(target.right, target.top, source.left, target.bottom);
 
-  return compactRects([vertical, horizontal]);
+  return compactConnectionRects(vertical, horizontal);
 }
 
 function createDirectConnection(
   first: MemberOutlineRect,
   second: MemberOutlineRect,
-): AxisAlignedRect[] | null {
+): ConnectionRects | null {
   const overlapLeft = Math.max(first.left, second.left);
   const overlapRight = Math.min(first.right, second.right);
   if (overlapRight > overlapLeft) {
@@ -229,6 +154,7 @@ function createBestConnection(
   first: MemberOutlineRect,
   second: MemberOutlineRect,
   targetIndex: number,
+  closedMembers: FilledAreaIndex,
 ): RectConnection {
   const distance =
     intervalGap(first.left, first.right, second.left, second.right) +
@@ -237,7 +163,7 @@ function createBestConnection(
 
   if (directConnection !== null) {
     return {
-      addedArea: connectionArea(directConnection),
+      addedArea: calculateConnectionAddedArea(directConnection, closedMembers),
       distance,
       key: `${first.id}:${second.id}:direct`,
       rects: directConnection,
@@ -272,7 +198,7 @@ function createBestConnection(
     },
   ].map((candidate) => ({
     ...candidate,
-    addedArea: connectionArea(candidate.rects),
+    addedArea: calculateConnectionAddedArea(candidate.rects, closedMembers),
   }));
 
   routeCandidates.sort(
@@ -310,32 +236,60 @@ function connectMemberRects(memberRects: readonly MemberOutlineRect[]): AxisAlig
     return [];
   }
 
+  // A shared member-only baseline keeps edge weights stable while Prim's
+  // frontier advances. Connector coordinates come from member edges, so each
+  // route can query its visible added area without rebuilding the closed grid.
+  const closedMembers = createClosedMemberAreaIndex(memberRects);
   const connectedIndexes = new Set<number>([0]);
   const connectorRects: AxisAlignedRect[] = [];
+  const bestConnectionByTarget: Array<RectConnection | null> = memberRects.map(
+    () => null,
+  );
+  const updateBestConnectionsFromSource = (sourceIndex: number) => {
+    const source = memberRects[sourceIndex];
+    if (source === undefined) {
+      return;
+    }
+
+    for (let targetIndex = 0; targetIndex < memberRects.length; targetIndex += 1) {
+      if (connectedIndexes.has(targetIndex)) {
+        continue;
+      }
+
+      const target = memberRects[targetIndex];
+      if (target === undefined) {
+        continue;
+      }
+
+      const candidate = createBestConnection(
+        source,
+        target,
+        targetIndex,
+        closedMembers,
+      );
+      if (isPreferredConnection(candidate, bestConnectionByTarget[targetIndex] ?? null)) {
+        bestConnectionByTarget[targetIndex] = candidate;
+      }
+    }
+  };
+
+  updateBestConnectionsFromSource(0);
 
   while (connectedIndexes.size < memberRects.length) {
     let bestConnection: RectConnection | null = null;
 
-    for (const sourceIndex of connectedIndexes) {
-      const source = memberRects[sourceIndex];
-      if (source === undefined) {
+    for (let targetIndex = 0; targetIndex < memberRects.length; targetIndex += 1) {
+      if (connectedIndexes.has(targetIndex)) {
         continue;
       }
 
-      for (let targetIndex = 0; targetIndex < memberRects.length; targetIndex += 1) {
-        if (connectedIndexes.has(targetIndex)) {
-          continue;
-        }
-
-        const target = memberRects[targetIndex];
-        if (target === undefined) {
-          continue;
-        }
-
-        const connection = createBestConnection(source, target, targetIndex);
-        if (isPreferredConnection(connection, bestConnection)) {
-          bestConnection = connection;
-        }
+      const connection = bestConnectionByTarget[targetIndex];
+      if (
+        connection !== undefined &&
+        connection !== null &&
+        isPreferredConnection(connection, bestConnection)
+      ) {
+        bestConnection = connection;
       }
     }
 
@@ -345,298 +299,179 @@ function connectMemberRects(memberRects: readonly MemberOutlineRect[]): AxisAlig
 
     connectedIndexes.add(bestConnection.targetIndex);
     connectorRects.push(...bestConnection.rects);
+    updateBestConnectionsFromSource(bestConnection.targetIndex);
   }
 
   return connectorRects;
 }
 
-function createHorizontalEnvelopeRects(
-  memberRects: readonly MemberOutlineRect[],
-): AxisAlignedRect[] {
-  const yCoordinates = Array.from(
-    new Set(memberRects.flatMap((rect) => [rect.top, rect.bottom])),
-  ).sort((first, second) => first - second);
-  const rowBands: Array<AxisAlignedRect | null> = [];
-
-  for (let index = 0; index < yCoordinates.length - 1; index += 1) {
-    const top = yCoordinates[index];
-    const bottom = yCoordinates[index + 1];
-    if (top === undefined || bottom === undefined) {
-      rowBands.push(null);
-      continue;
-    }
-
-    const centerY = (top + bottom) / 2;
-    const rowMembers = memberRects.filter(
-      (rect) => centerY > rect.top && centerY < rect.bottom,
-    );
-    if (rowMembers.length === 0) {
-      rowBands.push(null);
-      continue;
-    }
-
-    rowBands.push({
-      bottom,
-      left: Math.min(...rowMembers.map((rect) => rect.left)),
-      right: Math.max(...rowMembers.map((rect) => rect.right)),
-      top,
-    });
-  }
-
-  const envelopeRects = rowBands.filter(
-    (rect): rect is AxisAlignedRect => rect !== null,
+function createClosedMemberAreaIndex(
+  rects: readonly AxisAlignedRect[],
+): FilledAreaIndex {
+  return createFilledAreaIndex(
+    closeOrthogonalInroads(createCompressedCellGrid(rects)),
   );
+}
 
-  for (let index = 0; index < rowBands.length; index += 1) {
-    if (rowBands[index] !== null) {
-      continue;
-    }
+function intersectRects(
+  first: AxisAlignedRect,
+  second: AxisAlignedRect,
+): AxisAlignedRect | null {
+  return createRect(
+    Math.max(first.left, second.left),
+    Math.max(first.top, second.top),
+    Math.min(first.right, second.right),
+    Math.min(first.bottom, second.bottom),
+  );
+}
 
-    let previousIndex = index - 1;
-    while (previousIndex >= 0 && rowBands[previousIndex] === null) {
-      previousIndex -= 1;
-    }
-
-    let nextIndex = index + 1;
-    while (nextIndex < rowBands.length && rowBands[nextIndex] === null) {
-      nextIndex += 1;
-    }
-
-    const previousBand = rowBands[previousIndex];
-    const nextBand = rowBands[nextIndex];
-    const top = yCoordinates[index];
-    const bottom = yCoordinates[index + 1];
-    if (
-      previousBand === undefined ||
-      previousBand === null ||
-      nextBand === undefined ||
-      nextBand === null ||
-      top === undefined ||
-      bottom === undefined
-    ) {
-      continue;
-    }
-
-    const overlapLeft = Math.max(previousBand.left, nextBand.left);
-    const overlapRight = Math.min(previousBand.right, nextBand.right);
-    const bridge = createRect(overlapLeft, top, overlapRight, bottom);
-    if (bridge !== null) {
-      envelopeRects.push(bridge);
-    }
+function calculateConnectionAddedArea(
+  connectorRects: ConnectionRects,
+  closedMembers: FilledAreaIndex,
+): number {
+  const first = connectorRects[0];
+  if (first === undefined) {
+    return 0;
   }
 
-  return envelopeRects;
-}
-
-function pointKey(point: HullPoint): string {
-  return `${point.x}:${point.y}`;
-}
-
-function cellKey(xIndex: number, yIndex: number): string {
-  return `${xIndex}:${yIndex}`;
-}
-
-function containsPoint(rect: AxisAlignedRect, x: number, y: number): boolean {
-  return x > rect.left && x < rect.right && y > rect.top && y < rect.bottom;
-}
-
-function buildBoundaryEdges(rects: readonly AxisAlignedRect[]): BoundaryEdge[] {
-  const xCoordinates = Array.from(
-    new Set(rects.flatMap((rect) => [rect.left, rect.right])),
-  ).sort((first, second) => first - second);
-  const yCoordinates = Array.from(
-    new Set(rects.flatMap((rect) => [rect.top, rect.bottom])),
-  ).sort((first, second) => first - second);
-  const filledCells = new Set<string>();
-
-  for (let yIndex = 0; yIndex < yCoordinates.length - 1; yIndex += 1) {
-    const top = yCoordinates[yIndex];
-    const bottom = yCoordinates[yIndex + 1];
-    if (top === undefined || bottom === undefined) {
-      continue;
-    }
-
-    for (let xIndex = 0; xIndex < xCoordinates.length - 1; xIndex += 1) {
-      const left = xCoordinates[xIndex];
-      const right = xCoordinates[xIndex + 1];
-      if (left === undefined || right === undefined) {
-        continue;
-      }
-
-      const centerX = (left + right) / 2;
-      const centerY = (top + bottom) / 2;
-      if (rects.some((rect) => containsPoint(rect, centerX, centerY))) {
-        filledCells.add(cellKey(xIndex, yIndex));
-      }
-    }
+  const second = connectorRects[1];
+  const firstAddedArea =
+    rectArea(first) - filledAreaWithinRect(first, closedMembers);
+  if (second === undefined) {
+    return firstAddedArea;
   }
 
-  const edges: BoundaryEdge[] = [];
-  for (let yIndex = 0; yIndex < yCoordinates.length - 1; yIndex += 1) {
-    const top = yCoordinates[yIndex];
-    const bottom = yCoordinates[yIndex + 1];
-    if (top === undefined || bottom === undefined) {
-      continue;
-    }
+  const overlap = intersectRects(first, second);
+  const overlapAddedArea =
+    overlap === null
+      ? 0
+      : rectArea(overlap) - filledAreaWithinRect(overlap, closedMembers);
 
-    for (let xIndex = 0; xIndex < xCoordinates.length - 1; xIndex += 1) {
-      if (!filledCells.has(cellKey(xIndex, yIndex))) {
-        continue;
-      }
-
-      const left = xCoordinates[xIndex];
-      const right = xCoordinates[xIndex + 1];
-      if (left === undefined || right === undefined) {
-        continue;
-      }
-
-      if (!filledCells.has(cellKey(xIndex, yIndex - 1))) {
-        edges.push({
-          start: { x: left, y: top },
-          end: { x: right, y: top },
-        });
-      }
-      if (!filledCells.has(cellKey(xIndex + 1, yIndex))) {
-        edges.push({
-          start: { x: right, y: top },
-          end: { x: right, y: bottom },
-        });
-      }
-      if (!filledCells.has(cellKey(xIndex, yIndex + 1))) {
-        edges.push({
-          start: { x: right, y: bottom },
-          end: { x: left, y: bottom },
-        });
-      }
-      if (!filledCells.has(cellKey(xIndex - 1, yIndex))) {
-        edges.push({
-          start: { x: left, y: bottom },
-          end: { x: left, y: top },
-        });
-      }
-    }
-  }
-
-  return edges;
-}
-
-function isCollinear(previous: HullPoint, current: HullPoint, next: HullPoint): boolean {
   return (
-    (previous.x === current.x && current.x === next.x) ||
-    (previous.y === current.y && current.y === next.y)
+    firstAddedArea +
+    rectArea(second) -
+    filledAreaWithinRect(second, closedMembers) -
+    overlapAddedArea
   );
 }
 
-function simplifyLoop(loop: readonly HullPoint[]): HullPoint[] {
-  let points = [...loop];
-  let didSimplify = true;
+export interface GroupOutlinePolicy {
+  edgeMergeTolerance: number;
+  padding: number;
+}
 
-  while (didSimplify && points.length >= 4) {
-    didSimplify = false;
-    const simplified = points.filter((point, index) => {
-      const previous = points[(index - 1 + points.length) % points.length];
-      const next = points[(index + 1) % points.length];
-      const shouldRemove =
-        previous !== undefined &&
-        next !== undefined &&
-        isCollinear(previous, point, next);
-      didSimplify ||= shouldRemove;
-      return !shouldRemove;
+export const DEFAULT_GROUP_OUTLINE_POLICY = {
+  edgeMergeTolerance: 8,
+  padding: 16,
+} as const satisfies GroupOutlinePolicy;
+
+function remapCoordinatesOutward(
+  coordinates: readonly number[],
+  tolerance: number,
+  extreme: 'min' | 'max',
+): number[] {
+  const orderedIndexes = coordinates
+    .map((_, index) => index)
+    .sort((firstIndex, secondIndex) => {
+      const first = coordinates[firstIndex];
+      const second = coordinates[secondIndex];
+      if (first === undefined || second === undefined) {
+        return firstIndex - secondIndex;
+      }
+
+      return first - second || firstIndex - secondIndex;
     });
-    points = simplified;
-  }
+  const remapped = [...coordinates];
+  let clusterStart = 0;
 
-  return points;
-}
-
-function polygonArea(points: readonly HullPoint[]): number {
-  let doubledArea = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const next = points[(index + 1) % points.length];
-    if (current !== undefined && next !== undefined) {
-      doubledArea += current.x * next.y - next.x * current.y;
-    }
-  }
-
-  return Math.abs(doubledArea / 2);
-}
-
-function traceBoundaryLoops(edges: readonly BoundaryEdge[]): HullPoint[][] {
-  const edgeIndexesByStart = new Map<string, number[]>();
-  for (let index = 0; index < edges.length; index += 1) {
-    const edge = edges[index];
-    if (edge === undefined) {
-      continue;
-    }
-
-    const key = pointKey(edge.start);
-    const indexes = edgeIndexesByStart.get(key) ?? [];
-    indexes.push(index);
-    edgeIndexesByStart.set(key, indexes);
-  }
-
-  const unvisitedEdgeIndexes = new Set(edges.map((_, index) => index));
-  const loops: HullPoint[][] = [];
-
-  while (unvisitedEdgeIndexes.size > 0) {
-    const firstEdgeIndex = unvisitedEdgeIndexes.values().next().value;
-    if (firstEdgeIndex === undefined) {
+  while (clusterStart < orderedIndexes.length) {
+    const startIndex = orderedIndexes[clusterStart];
+    const startValue = startIndex === undefined ? undefined : coordinates[startIndex];
+    if (startIndex === undefined || startValue === undefined) {
       break;
     }
 
-    const firstEdge = edges[firstEdgeIndex];
-    if (firstEdge === undefined) {
-      unvisitedEdgeIndexes.delete(firstEdgeIndex);
-      continue;
-    }
-
-    const loop: HullPoint[] = [];
-    let currentEdgeIndex: number | undefined = firstEdgeIndex;
-
-    while (currentEdgeIndex !== undefined && unvisitedEdgeIndexes.has(currentEdgeIndex)) {
-      const edge: BoundaryEdge | undefined = edges[currentEdgeIndex];
-      if (edge === undefined) {
+    let clusterEnd = clusterStart;
+    let canonical = startValue;
+    while (clusterEnd + 1 < orderedIndexes.length) {
+      const nextIndex = orderedIndexes[clusterEnd + 1];
+      const nextValue = nextIndex === undefined ? undefined : coordinates[nextIndex];
+      if (nextValue === undefined || nextValue - startValue > tolerance) {
         break;
       }
 
-      unvisitedEdgeIndexes.delete(currentEdgeIndex);
-      loop.push(edge.start);
-      const nextIndexes: number[] = edgeIndexesByStart.get(pointKey(edge.end)) ?? [];
-      currentEdgeIndex = nextIndexes.find((index) => unvisitedEdgeIndexes.has(index));
+      canonical =
+        extreme === 'max' ? Math.max(canonical, nextValue) : Math.min(canonical, nextValue);
+      clusterEnd += 1;
     }
 
-    if (loop.length >= 4) {
-      loops.push(simplifyLoop(loop));
+    for (let index = clusterStart; index <= clusterEnd; index += 1) {
+      const coordinateIndex = orderedIndexes[index];
+      if (coordinateIndex !== undefined) {
+        remapped[coordinateIndex] = canonical;
+      }
     }
+
+    clusterStart = clusterEnd + 1;
   }
 
-  return loops;
+  return remapped;
+}
+
+function mergeNearEqualOuterEdges(
+  memberRects: readonly MemberOutlineRect[],
+  tolerance: number,
+): MemberOutlineRect[] {
+  const effectiveTolerance = Math.max(0, tolerance);
+  const tops = remapCoordinatesOutward(
+    memberRects.map((rect) => rect.top),
+    effectiveTolerance,
+    'min',
+  );
+  const bottoms = remapCoordinatesOutward(
+    memberRects.map((rect) => rect.bottom),
+    effectiveTolerance,
+    'max',
+  );
+  const lefts = remapCoordinatesOutward(
+    memberRects.map((rect) => rect.left),
+    effectiveTolerance,
+    'min',
+  );
+  const rights = remapCoordinatesOutward(
+    memberRects.map((rect) => rect.right),
+    effectiveTolerance,
+    'max',
+  );
+
+  return memberRects.map((rect, index) => ({
+    id: rect.id,
+    bottom: bottoms[index] ?? rect.bottom,
+    left: lefts[index] ?? rect.left,
+    right: rights[index] ?? rect.right,
+    top: tops[index] ?? rect.top,
+  }));
 }
 
 export function calculateCompositeGroupOutline(
   memberRects: readonly CanvasNodeRect[],
-  padding: number,
+  policy: GroupOutlinePolicy,
 ): HullPoint[] {
-  const effectivePadding = Math.max(0, padding);
-  const paddedMemberRects = memberRects
-    .map((rect) => toPaddedRect(rect, effectivePadding))
-    .sort((first, second) => first.id.localeCompare(second.id));
+  const effectivePadding = Math.max(0, policy.padding);
+  const paddedMemberRects = mergeNearEqualOuterEdges(
+    memberRects
+      .map((rect) => toPaddedRect(rect, effectivePadding))
+      .sort((first, second) => first.id.localeCompare(second.id)),
+    policy.edgeMergeTolerance,
+  );
 
   if (paddedMemberRects.length === 0) {
     return [];
   }
 
   const connectorRects = connectMemberRects(paddedMemberRects);
-  const envelopeRects = createHorizontalEnvelopeRects(paddedMemberRects);
-  const boundaryLoops = traceBoundaryLoops(
-    buildBoundaryEdges([
-      ...paddedMemberRects,
-      ...envelopeRects,
-      ...connectorRects,
-    ]),
+  const closedGrid = closeOrthogonalInroads(
+    createCompressedCellGrid([...paddedMemberRects, ...connectorRects]),
   );
-  boundaryLoops.sort((first, second) => polygonArea(second) - polygonArea(first));
-
-  return boundaryLoops[0] ?? [];
+  return traceOuterBoundary(closedGrid);
 }
