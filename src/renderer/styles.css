@@ -35,12 +35,6 @@ textarea {
   background: #fafcff;
 }
 
-.canvas-backdrop {
-  position: absolute;
-  pointer-events: none;
-  background-color: #fafcff;
-}
-
 .alignment-guide {
   position: absolute;
   z-index: 100000;

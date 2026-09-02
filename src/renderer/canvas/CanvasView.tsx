@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Background,
+  BackgroundVariant,
   Controls,
   ReactFlow,
   SelectionMode,
@@ -25,7 +27,6 @@ import {
   CanvasAlignmentProvider,
   type NodeGeometry,
 } from './canvas-alignment-context';
-import { CanvasBackdrop } from './CanvasBackdrop';
 import { CanvasEditorProvider } from './canvas-editor-context';
 import { CanvasPersistenceStatus, type PersistenceStatus } from './CanvasPersistenceStatus';
 import { GroupOutlines } from './GroupOutlines';
@@ -409,12 +410,12 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           onPaneClick={handlePaneClick}
           onDoubleClick={handleCanvasDoubleClick}
           fitView
-          minZoom={0.2}
-          maxZoom={2}
+          minZoom={0.1}
+          maxZoom={4}
           zoomOnScroll={false}
           zoomOnPinch
           zoomOnDoubleClick={false}
-          panOnDrag={false}
+          panOnDrag={[1]}
           panOnScroll
           autoPanOnNodeFocus={false}
           selectionOnDrag
@@ -424,7 +425,12 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           elevateNodesOnSelect={false}
           zIndexMode="manual"
         >
-          <CanvasBackdrop />
+          <Background
+            variant={BackgroundVariant.Lines}
+            gap={32}
+            size={1}
+            color="rgba(32, 32, 29, 0.1)"
+          />
           <GroupOutlines
             groups={groups}
             nodes={nodes}
