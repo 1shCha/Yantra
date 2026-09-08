@@ -36,7 +36,7 @@ export function createWindow(): void {
     minHeight: 620,
     title: 'Yantra',
     transparent: false,
-    backgroundColor: '#fafcff',
+    backgroundColor: '#000000',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       contextIsolation: true,
@@ -44,6 +44,13 @@ export function createWindow(): void {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
+
+  const publishFullscreenState = () => {
+    mainWindow.webContents.send('window:fullscreen-change', mainWindow.isFullScreen());
+  };
+
+  mainWindow.on('enter-full-screen', publishFullscreenState);
+  mainWindow.on('leave-full-screen', publishFullscreenState);
 
   installCloseFlushHandler(mainWindow);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

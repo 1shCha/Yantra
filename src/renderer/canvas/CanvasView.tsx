@@ -103,7 +103,17 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   const deleteSelectedGroup = useCanvasStore((state) => state.deleteSelectedGroup);
   const { getViewport, getZoom, screenToFlowPosition } = useReactFlow();
   const [alignmentResult, setAlignmentResult] = useState<AlignmentResult | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const resizeStartBoundsRef = useRef<{ bounds: NodeGeometry; nodeId: string } | null>(null);
+
+  useEffect(() => {
+    const canvasApi = window.yantraCanvas;
+    if (canvasApi === undefined) {
+      return;
+    }
+
+    return canvasApi.onFullscreenChange(setIsFullscreen);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -382,9 +392,11 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   );
 
   return (
-    <main ref={canvasRef} className="app-shell">
-      <CanvasEditorProvider>
-        <CanvasAlignmentProvider value={alignmentContextValue}>
+    <main ref={canvasRef} className={`app-shell${isFullscreen ? ' app-shell--fullscreen' : ''}`}>
+      <div className="app-shell__notch" aria-hidden="true" />
+      <div className="app-shell__surface">
+        <CanvasEditorProvider>
+          <CanvasAlignmentProvider value={alignmentContextValue}>
         {editingNodeId === null ? (
           <SelectionToolbar
             canGroupSelectedNodes={canGroupSelectedNodes}
@@ -447,8 +459,9 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           />
           <Controls position="bottom-right" />
         </ReactFlow>
-        </CanvasAlignmentProvider>
-      </CanvasEditorProvider>
+          </CanvasAlignmentProvider>
+        </CanvasEditorProvider>
+      </div>
     </main>
   );
 }

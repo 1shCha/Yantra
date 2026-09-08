@@ -35,6 +35,17 @@ const yantraCanvas: YantraCanvasApi = {
   },
   save: (document: JsonCanvasDocument) => ipcRenderer.invoke(CANVAS_CHANNELS.SAVE, document),
   status: () => ipcRenderer.invoke(CANVAS_CHANNELS.STATUS),
+  onFullscreenChange: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, isFullscreen: boolean) => {
+      callback(isFullscreen);
+    };
+
+    ipcRenderer.on('window:fullscreen-change', listener);
+
+    return () => {
+      ipcRenderer.off('window:fullscreen-change', listener);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('yantraCanvas', yantraCanvas);

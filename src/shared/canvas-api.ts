@@ -27,6 +27,7 @@ export interface YantraCanvasApi {
   save: (document: JsonCanvasDocument) => Promise<CanvasSaveResult>;
   status: () => Promise<CanvasStatusResult>;
   onBeforeClose: (callback: () => void | Promise<void>) => () => void;
+  onFullscreenChange: (callback: (isFullscreen: boolean) => void) => () => void;
 }
 
 export const CANVAS_CHANNELS = {
