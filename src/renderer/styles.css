@@ -34,11 +34,56 @@ textarea {
   top: 0;
   left: 0;
   z-index: 2;
-  width: 220px;
-  height: 42px;
-  border-radius: 0 0 20px 0;
+  width: 165px;
+  height: 32px;
+  border-radius: 0 0 15px 0;
   background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 16px;
   pointer-events: none;
+}
+
+.app-shell__sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  width: 0;
+  overflow: hidden;
+  background: #000;
+  opacity: 0;
+  transition:
+    width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease-out;
+}
+
+.app-shell__sidebar--open {
+  width: 165px;
+  opacity: 1;
+}
+
+.app-shell__name {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #fafcff;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.app-shell__name:focus-visible {
+  outline: 2px solid #fafcff;
+  outline-offset: 3px;
 }
 
 /* Fill outside a transparent quarter-circle to blend into the 4px surround. */
@@ -46,12 +91,12 @@ textarea {
 .app-shell__notch::after {
   content: "";
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
   background: radial-gradient(
     circle at bottom right,
-    transparent 11.5px,
-    #000 12px
+    transparent 7.5px,
+    #000 8px
   );
 }
 
@@ -71,6 +116,11 @@ textarea {
   overflow: hidden;
   border-radius: 12px;
   background: #fafcff;
+  transition: left 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-shell--sidebar-open .app-shell__surface {
+  left: 169px;
 }
 
 .react-flow {

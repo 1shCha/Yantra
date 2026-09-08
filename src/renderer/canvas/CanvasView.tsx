@@ -104,6 +104,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   const { getViewport, getZoom, screenToFlowPosition } = useReactFlow();
   const [alignmentResult, setAlignmentResult] = useState<AlignmentResult | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isBrandSidebarOpen, setIsBrandSidebarOpen] = useState(false);
   const resizeStartBoundsRef = useRef<{ bounds: NodeGeometry; nodeId: string } | null>(null);
 
   useEffect(() => {
@@ -392,8 +393,27 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   );
 
   return (
-    <main ref={canvasRef} className={`app-shell${isFullscreen ? ' app-shell--fullscreen' : ''}`}>
-      <div className="app-shell__notch" aria-hidden="true" />
+    <main
+      ref={canvasRef}
+      className={`app-shell${isFullscreen ? ' app-shell--fullscreen' : ''}${
+        isBrandSidebarOpen ? ' app-shell--sidebar-open' : ''
+      }`}
+    >
+      <aside
+        className={`app-shell__sidebar${isBrandSidebarOpen ? ' app-shell__sidebar--open' : ''}`}
+        aria-hidden={!isBrandSidebarOpen}
+        aria-label="Yantra sidebar"
+      />
+      <div className="app-shell__notch" aria-label="Yantra">
+        <button
+          type="button"
+          className="app-shell__name"
+          aria-expanded={isBrandSidebarOpen}
+          onClick={() => setIsBrandSidebarOpen((isOpen) => !isOpen)}
+        >
+          Yantra
+        </button>
+      </div>
       <div className="app-shell__surface">
         <CanvasEditorProvider>
           <CanvasAlignmentProvider value={alignmentContextValue}>
