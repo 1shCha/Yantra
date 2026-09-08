@@ -66,19 +66,87 @@ textarea {
   opacity: 1;
 }
 
+.app-shell__sidebar--right {
+  right: 0;
+  left: auto;
+}
+
 .app-shell__name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 0;
   margin: 0;
   padding: 0;
   background: transparent;
   color: #fafcff;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 18px;
+  font-size: 24px;
   font-weight: 500;
-  letter-spacing: 0.02em;
   line-height: 1;
   cursor: pointer;
   pointer-events: auto;
+}
+
+.app-shell__name-mark {
+  position: relative;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+}
+
+/* Leave the native window controls their own space in the compact row. */
+.app-shell:not(.app-shell--fullscreen) .app-shell__notch:not(.app-shell__notch--right) {
+  padding-left: 88px;
+}
+
+.app-shell:not(.app-shell--fullscreen) .app-shell__name-text {
+  display: none;
+}
+
+.app-shell:not(.app-shell--fullscreen) .app-shell__name-mark {
+  flex-basis: 21px;
+  width: 21px;
+  height: 21px;
+  /* Optically align the top-heavy triangle with the native circular controls. */
+  top: 2px;
+}
+
+.app-shell:not(.app-shell--fullscreen) .app-shell__name-mark svg {
+  width: 21px;
+  height: 21px;
+}
+
+.app-shell__name-logo,
+.app-shell__name-toggle {
+  position: absolute;
+  inset: 0;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.app-shell__name-logo {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+}
+
+.app-shell__name-toggle {
+  opacity: 0;
+  transform: scale(0.72) rotate(-6deg);
+}
+
+.app-shell__name:hover .app-shell__name-logo,
+.app-shell__name:focus-visible .app-shell__name-logo {
+  opacity: 0;
+  transform: scale(0.72) rotate(6deg);
+}
+
+.app-shell__name:hover .app-shell__name-toggle,
+.app-shell__name:focus-visible .app-shell__name-toggle {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
 }
 
 .app-shell__name:focus-visible {
@@ -110,17 +178,68 @@ textarea {
   left: 4px;
 }
 
+.app-shell__notch--right {
+  right: 0;
+  left: auto;
+  width: 48px;
+  padding: 0;
+  border-radius: 0 0 0 15px;
+}
+
+.app-shell__right-toggle {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fafcff;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.app-shell__right-toggle:focus-visible {
+  outline: 2px solid #fafcff;
+  outline-offset: -3px;
+  border-radius: 6px;
+}
+
+.app-shell__notch--right::before,
+.app-shell__notch--right::after {
+  left: auto;
+  background: radial-gradient(
+    circle at bottom left,
+    transparent 7.5px,
+    #000 8px
+  );
+}
+
+.app-shell__notch--right::before {
+  right: 100%;
+}
+
+.app-shell__notch--right::after {
+  right: 4px;
+}
+
 .app-shell__surface {
   position: absolute;
   inset: 4px;
   overflow: hidden;
   border-radius: 12px;
   background: #fafcff;
-  transition: left 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    left 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    right 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .app-shell--sidebar-open .app-shell__surface {
   left: 169px;
+}
+
+.app-shell--right-sidebar-open .app-shell__surface {
+  right: 169px;
 }
 
 .react-flow {
