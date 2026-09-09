@@ -8,7 +8,7 @@ import StarterKit from '@tiptap/starter-kit';
 
 import type { TiptapDoc } from '../../shared/tiptap-document';
 
-export const canvasTiptapSchemaExtensions = [
+export const documentSchemaExtensions = [
   StarterKit.configure({
     blockquote: false,
     code: false,
@@ -38,8 +38,8 @@ export const canvasTiptapSchemaExtensions = [
   }),
 ];
 
-export const canvasTiptapEditorExtensions = [
-  ...canvasTiptapSchemaExtensions,
+export const documentEditorExtensions = [
+  ...documentSchemaExtensions,
   Placeholder.configure({
     placeholder: 'Type…',
     includeChildren: true,
@@ -61,5 +61,5 @@ function withLineBreaksInEmptyBlocks(html: string): string {
 }
 
 export function renderTiptapDocToHtml(doc: TiptapDoc): string {
-  return withLineBreaksInEmptyBlocks(generateHTML(doc, canvasTiptapSchemaExtensions));
+  return withLineBreaksInEmptyBlocks(generateHTML(doc, documentSchemaExtensions));
 }

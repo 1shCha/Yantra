@@ -700,6 +700,19 @@ textarea {
 
 .markdown-node__editor {
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.markdown-node__editor-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-width: 0;
+}
+
+.markdown-node__editor-content > .markdown-node__prose {
+  flex: 1 0 auto;
 }
 
 .markdown-node__prose {

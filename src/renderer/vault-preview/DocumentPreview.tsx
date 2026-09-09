@@ -1,15 +1,13 @@
-import { EditorContent, useEditor } from '@tiptap/react';
-import { canvasTiptapEditorExtensions } from '../canvas/tiptap-schema';
-import { EditorToolbarControls } from '../canvas/EditorToolbar';
+import { EditorContent } from '@tiptap/react';
+import { useDocumentEditor } from '../editor/useDocumentEditor';
+import { EditorToolbarControls } from '../editor/EditorToolbarControls';
 import { PreviewFileHeader, type PreviewSaveState } from './PreviewFileHeader';
 import { readingNotes } from './preview-documents';
 
 export function DocumentPreview({ longTitle = false, unplaced = false, saveState = 'Saved' }: { longTitle?: boolean; unplaced?: boolean; saveState?: PreviewSaveState }) {
-  const editor = useEditor({
-    extensions: canvasTiptapEditorExtensions,
-    content: readingNotes,
+  const editor = useDocumentEditor({
+    initialContent: readingNotes,
     editable: false,
-    immediatelyRender: false,
     editorProps: {
       attributes: { class: 'markdown-node__prose', 'aria-label': 'Reading notes document', 'aria-readonly': 'true' },
       handleClick: () => true,

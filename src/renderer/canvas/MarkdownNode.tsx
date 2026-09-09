@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { EditorContent, useEditor } from '@tiptap/react';
+import { EditorContent } from '@tiptap/react';
 import {
   NodeResizer,
   NodeToolbar,
@@ -11,7 +11,8 @@ import {
   type ResizeParamsWithDirection,
 } from '@xyflow/react';
 
-import { isTiptapDocEmpty, tiptapDocSchema, type TiptapDoc } from '../../shared/tiptap-document';
+import { isTiptapDocEmpty, type TiptapDoc } from '../../shared/tiptap-document';
+import { useDocumentEditor } from '../editor/useDocumentEditor';
 import { useCanvasStore } from '../stores/canvasStore';
 import { useCanvasAlignment } from './canvas-alignment-context';
 import { useCanvasEditor } from './canvas-editor-context';
@@ -22,7 +23,7 @@ import {
   MARKDOWN_NODE_MIN_WIDTH,
   type MarkdownNodeData,
 } from './react-flow-mapping';
-import { canvasTiptapEditorExtensions, renderTiptapDocToHtml } from './tiptap-schema';
+import { renderTiptapDocToHtml } from '../editor/tiptap-schema';
 
 const EDITOR_TOOLBAR_FLIP_SPACE_PX = 56;
 const EDITOR_TOOLBAR_Z_INDEX = 10_000;
@@ -89,26 +90,21 @@ function MarkdownNodeEditor({
   const [isEditorScrollable, setIsEditorScrollable] = useState(false);
   const { setEditor } = useCanvasEditor();
   const dismissCreatePlaceholder = useCanvasStore((state) => state.dismissCreatePlaceholder);
-  const editor = useEditor({
-    immediatelyRender: false,
-    extensions: canvasTiptapEditorExtensions,
-    content: doc,
+  const editor = useDocumentEditor({
+    initialContent: doc,
     editorProps: {
       attributes: {
         class: 'markdown-node__prose',
         spellcheck: 'true',
       },
     },
-    onCreate: ({ editor: currentEditor }) => {
+    onCreate: (currentEditor) => {
       const pos = lastMeaningfulCaretPos(currentEditor.state.doc);
       currentEditor.chain().setTextSelection(pos).focus().run();
     },
-    onUpdate: ({ editor: currentEditor }) => {
-      const parsed = tiptapDocSchema.safeParse(currentEditor.getJSON());
-      if (parsed.success) {
-        onDocChange(parsed.data);
-        dismissCreatePlaceholder(nodeId);
-      }
+    onChange: (nextDoc) => {
+      onDocChange(nextDoc);
+      dismissCreatePlaceholder(nodeId);
     },
   });
 
@@ -152,8 +148,15 @@ function MarkdownNodeEditor({
         selected && isEditorScrollable ? 'nowheel' : ''
       }`}
       data-create-placeholder={showCreatePlaceholder ? 'true' : 'false'}
+      onMouseDown={(event) => {
+        // Padding belongs to the editor too; do not focus the outer flow node.
+        if (event.button === 0 && event.target === event.currentTarget && editor) {
+          event.preventDefault();
+          editor.commands.focus();
+        }
+      }}
     >
-      <EditorContent editor={editor} />
+      <EditorContent className="markdown-node__editor-content" editor={editor} />
     </div>
   );
 }
@@ -165,11 +168,17 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
   const [isEditorReady, setIsEditorReady] = useState(false);
   const isEditing = useCanvasStore((state) => state.editingNodeId === id);
   const activateNode = useCanvasStore((state) => state.activateNode);
+  const selectNode = useCanvasStore((state) => state.selectNode);
   const setNodeGeometry = useCanvasStore((state) => state.setNodeGeometry);
   const updateNodeDoc = useCanvasStore((state) => state.updateNodeDoc);
   const { applyResizeAlignment, clearAlignmentGuides, setResizeStartBounds } =
     useCanvasAlignment();
-  const previewHtml = useMemo(() => renderTiptapDocToHtml(data.doc), [data.doc]);
+  // Keep the HTML prop stable during selection/geometry updates. Replacing
+  // preview children on pointerdown removes the target before click/dblclick.
+  const previewMarkup = useMemo(
+    () => ({ __html: renderTiptapDocToHtml(data.doc) }),
+    [data.doc],
+  );
   const isPreviewEmpty = isTiptapDocEmpty(data.doc);
   const viewport = useViewport();
   const internalNode = useInternalNode(id);
@@ -296,6 +305,9 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
 
   const handleResizeStart = useCallback(
     (_event: ResizeDragEvent, params: ResizeParams) => {
+      if (!selected) {
+        selectNode(id);
+      }
       setResizeStartBounds(id, {
         x: params.x,
         y: params.y,
@@ -303,7 +315,7 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
         height: params.height,
       });
     },
-    [id, setResizeStartBounds],
+    [id, selected, selectNode, setResizeStartBounds],
   );
 
   const handleShouldResize = useCallback(
@@ -351,7 +363,7 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
         onPointerDownCapture={handlePointerDownCapture}
       >
         <NodeResizer
-          isVisible={selected}
+          isVisible
           minWidth={MARKDOWN_NODE_MIN_WIDTH}
           minHeight={MARKDOWN_NODE_MIN_HEIGHT}
           handleClassName="markdown-node__resize-handle"
@@ -378,7 +390,7 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
             ) : (
               <div
                 className="markdown-node__preview"
-                dangerouslySetInnerHTML={{ __html: previewHtml }}
+                dangerouslySetInnerHTML={previewMarkup}
               />
             )}
           </div>

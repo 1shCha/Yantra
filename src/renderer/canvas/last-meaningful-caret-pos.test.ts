@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { TiptapDoc, TiptapNode } from '../../shared/tiptap-document';
 import { lastMeaningfulCaretPos } from './last-meaningful-caret-pos';
-import { canvasTiptapSchemaExtensions } from './tiptap-schema';
+import { documentSchemaExtensions } from '../editor/tiptap-schema';
 
-const schema = getSchema(canvasTiptapSchemaExtensions);
+const schema = getSchema(documentSchemaExtensions);
 
 function caretPos(doc: TiptapDoc): number {
   return lastMeaningfulCaretPos(Node.fromJSON(schema, doc));

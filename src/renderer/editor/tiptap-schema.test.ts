@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest';
+import { getSchema } from '@tiptap/core';
+import { tiptapDocSchema } from '../../shared/tiptap-document';
+import { readingNotes } from '../vault-preview/preview-documents';
 
-import { renderTiptapDocToHtml } from './tiptap-schema';
+import { documentEditorExtensions, documentSchemaExtensions, renderTiptapDocToHtml } from './tiptap-schema';
+
+describe('shared document schema', () => {
+  it('round-trips rich document content through both editor and preview schemas', () => {
+    const editorSchema = getSchema(documentEditorExtensions);
+    const previewSchema = getSchema(documentSchemaExtensions);
+    const editorDoc = editorSchema.nodeFromJSON(readingNotes);
+    editorDoc.check();
+    const storedDoc = tiptapDocSchema.parse(editorDoc.toJSON());
+    const previewDoc = previewSchema.nodeFromJSON(storedDoc);
+    previewDoc.check();
+    expect(previewDoc.toJSON()).toEqual(editorDoc.toJSON());
+    expect(editorSchema.nodeFromJSON(storedDoc).eq(editorDoc)).toBe(true);
+  });
+
+  it('keeps the same content types when adding editor-only behavior', () => {
+    const editorSchema = getSchema(documentEditorExtensions);
+    const previewSchema = getSchema(documentSchemaExtensions);
+    expect(Object.keys(editorSchema.nodes)).toEqual(Object.keys(previewSchema.nodes));
+    expect(Object.keys(editorSchema.marks)).toEqual(Object.keys(previewSchema.marks));
+  });
+});
 
 describe('renderTiptapDocToHtml', () => {
   it('keeps empty paragraphs as line-height breaks in preview HTML', () => {

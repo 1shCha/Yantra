@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Background, BackgroundVariant, Handle, Position, ReactFlow, ReactFlowProvider, type NodeProps } from '@xyflow/react';
 import { ExternalLink, FileQuestion } from 'lucide-react';
 import { GroupOutlines } from '../canvas/GroupOutlines';
-import { renderTiptapDocToHtml } from '../canvas/tiptap-schema';
+import { renderTiptapDocToHtml } from '../editor/tiptap-schema';
 import type { MarkdownFlowNode } from '../canvas/react-flow-mapping';
 import { getStackingZIndices } from '../../shared/stacking-order';
 import { PreviewFileHeader } from './PreviewFileHeader';
