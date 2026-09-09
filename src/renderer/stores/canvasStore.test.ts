@@ -40,6 +40,38 @@ const initialDocument = {
   layerOrder: ['moving-node', 'stationary-node'],
 } satisfies JsonCanvasDocument;
 
+describe('node activation', () => {
+  beforeEach(() => {
+    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
+  });
+
+  afterEach(() => {
+    useCanvasStore.getState().loadJsonCanvasDocument(null);
+  });
+
+  it('allows a newly created node to be dragged without entering edit mode', () => {
+    useCanvasStore.getState().createMarkdownNode({ x: 100, y: 100 });
+    const nodeId = useCanvasStore.getState().selectedNodeIds[0]!;
+
+    useCanvasStore.getState().activateNode(nodeId);
+    useCanvasStore.getState().setNodePosition(nodeId, { x: 200, y: 300 });
+
+    expect(useCanvasStore.getState().editingNodeId).toBeNull();
+    expect(useCanvasStore.getState().selectedNodeIds).toEqual([nodeId]);
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === nodeId)?.position)
+      .toEqual({ x: 200, y: 300 });
+  });
+
+  it('keeps repeated presses as selection until editing is explicitly requested', () => {
+    useCanvasStore.getState().activateNode('moving-node');
+    useCanvasStore.getState().activateNode('moving-node');
+    expect(useCanvasStore.getState().editingNodeId).toBeNull();
+
+    useCanvasStore.getState().editNode('moving-node');
+    expect(useCanvasStore.getState().editingNodeId).toBe('moving-node');
+  });
+});
+
 describe('setNodePosition', () => {
   beforeEach(() => {
     useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);

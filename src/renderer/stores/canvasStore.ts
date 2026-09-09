@@ -345,18 +345,6 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
       return;
     }
 
-    if (currentState.selectedNodeIds.length === 1 && currentState.selectedNodeIds[0] === nodeId) {
-      const selectedNodeIds = [nodeId];
-
-      set({
-        nodes: applySelectedNodeIds(currentState.nodes, selectedNodeIds),
-        selectedNodeIds,
-        selectedGroupId: null,
-        editingNodeId: nodeId,
-      });
-      return;
-    }
-
     const selectedNodeIds = [nodeId];
 
     set({

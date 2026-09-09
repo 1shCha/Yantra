@@ -17,6 +17,7 @@ interface EditorToolbarProps {
 interface EditorToolbarControlsProps {
   editor: Editor;
   menuSide: EditorToolbarMenuSide;
+  readOnly?: boolean;
 }
 
 interface ToolbarButtonProps {
@@ -234,6 +235,7 @@ function ToolbarButton({
       className="editor-toolbar__action"
       type="button"
       aria-label={label}
+      title={label}
       aria-pressed={pressed}
       aria-expanded={expanded}
       disabled={disabled}
@@ -244,7 +246,7 @@ function ToolbarButton({
   );
 }
 
-function EditorToolbarControls({ editor, menuSide }: EditorToolbarControlsProps) {
+export function EditorToolbarControls({ editor, menuSide, readOnly = false }: EditorToolbarControlsProps) {
   const toolbarRef = useRef<HTMLElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
   const [openMenu, setOpenMenu] = useState<OpenToolbarMenu>(null);
@@ -296,6 +298,8 @@ function EditorToolbarControls({ editor, menuSide }: EditorToolbarControlsProps)
       className="editor-toolbar nodrag nopan nowheel"
       data-menu-side={menuSide}
       aria-label="Text formatting"
+      onClickCapture={readOnly ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
+      onChangeCapture={readOnly ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
       onMouseDown={preventToolbarMouseDown}
       onPointerDown={stopToolbarPropagation}
       onDoubleClick={stopToolbarPropagation}
