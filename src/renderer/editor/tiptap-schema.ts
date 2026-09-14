@@ -5,11 +5,15 @@ import TextAlign from '@tiptap/extension-text-align';
 import { Placeholder } from '@tiptap/extensions/placeholder';
 import { generateHTML } from '@tiptap/html';
 import StarterKit from '@tiptap/starter-kit';
+import { Node } from '@tiptap/core';
 
 import type { TiptapDoc } from '../../shared/tiptap-document';
+import { ProtectedDocument, ProtectedTitle } from './protected-title';
 
 export const documentSchemaExtensions = [
+  Node.create({ name: 'doc', topNode: true, content: 'block+' }),
   StarterKit.configure({
+    document: false,
     blockquote: false,
     code: false,
     horizontalRule: false,
@@ -39,9 +43,10 @@ export const documentSchemaExtensions = [
 ];
 
 export const documentEditorExtensions = [
-  ...documentSchemaExtensions,
+  ...documentSchemaExtensions.map((extension) => extension.name === 'doc' ? ProtectedDocument : extension),
+  ProtectedTitle,
   Placeholder.configure({
-    placeholder: 'Type…',
+    placeholder: ({ pos }) => pos === 0 ? 'Title' : 'Type…',
     includeChildren: true,
   }),
 ];

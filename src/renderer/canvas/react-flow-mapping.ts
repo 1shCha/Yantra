@@ -22,7 +22,8 @@ export const MARKDOWN_NODE_MIN_HEIGHT = 160;
 
 export interface MarkdownNodeData extends Record<string, unknown> {
   canvasType: typeof JSON_CANVAS_TEXT_NODE_TYPE;
-  doc: TiptapDoc;
+  doc?: TiptapDoc;
+  documentId?: string;
   color?: string;
   showCreatePlaceholder?: boolean;
 }
@@ -79,17 +80,18 @@ function readDimension(value: number | string | undefined): number {
   return Number(value);
 }
 
-function getFlowNodeWidth(node: MarkdownFlowNode): number {
+export function getFlowNodeWidth(node: MarkdownFlowNode): number {
   const raw = node.measured?.width ?? node.width ?? readDimension(node.style?.width);
   return toCanvasInteger(raw, NODE_WIDTH);
 }
 
-function getFlowNodeHeight(node: MarkdownFlowNode): number {
+export function getFlowNodeHeight(node: MarkdownFlowNode): number {
   const raw = node.measured?.height ?? node.height ?? readDimension(node.style?.height);
   return toCanvasInteger(raw, NODE_HEIGHT);
 }
 
 function jsonCanvasNodeFromFlowNode(node: MarkdownFlowNode): JsonCanvasNode {
+  if (!node.data.doc || node.data.documentId) throw new Error('Document references must use vault canvas persistence.');
   return {
     id: node.id,
     type: JSON_CANVAS_TEXT_NODE_TYPE,
@@ -118,7 +120,7 @@ function jsonCanvasEdgeToReactFlowEdge(edge: JsonCanvasEdge): MarkdownFlowEdge {
   };
 }
 
-function jsonCanvasEdgeFromFlowEdge(edge: MarkdownFlowEdge): JsonCanvasEdge {
+export function jsonCanvasEdgeFromFlowEdge(edge: MarkdownFlowEdge): JsonCanvasEdge {
   return {
     id: edge.id,
     fromNode: edge.source,

@@ -62,13 +62,67 @@ textarea {
 }
 
 .app-shell__sidebar--open {
-  width: 165px;
+  width: var(--left-sidebar-width, 165px);
   opacity: 1;
 }
 
 .app-shell__sidebar--right {
   right: 0;
   left: auto;
+}
+
+.app-shell__sidebar--right.app-shell__sidebar--open {
+  width: var(--right-sidebar-width, 165px);
+}
+
+.app-shell__resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.app-shell__resizer--left {
+  left: calc(var(--left-sidebar-width, 165px) - 3px);
+}
+
+.app-shell__resizer--right {
+  right: calc(var(--right-sidebar-width, 165px) - 3px);
+}
+
+.app-shell__resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.app-shell__resizer:hover::after,
+.app-shell__resizer:focus-visible::after,
+.app-shell__resizer[data-resizing='true']::after {
+  background: rgba(250, 252, 255, 0.45);
+}
+
+.app-shell__resizer:focus-visible {
+  outline: none;
+}
+
+.app-shell--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.app-shell--resizing .app-shell__sidebar,
+.app-shell--resizing .app-shell__surface {
+  transition: none;
 }
 
 .app-shell__name {
@@ -81,7 +135,7 @@ textarea {
   padding: 0;
   background: transparent;
   color: #fafcff;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 24px;
   font-weight: 500;
   line-height: 1;
@@ -89,14 +143,25 @@ textarea {
   pointer-events: auto;
 }
 
+.app-shell__name-text {
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
+
 .app-shell__name-mark {
   position: relative;
-  flex: 0 0 25px;
-  width: 25px;
-  height: 25px;
+  /* Match the visible symbol to the capital Y, with its bottom on the baseline. */
+  flex: 0 0 auto;
+  width: 36px;
+  height: 16px;
 }
 
 /* Leave the native window controls their own space in the compact row. */
+.app-shell--fullscreen .app-shell__notch:not(.app-shell__notch--right) {
+  justify-content: flex-start;
+  padding-left: 12px;
+}
+
 .app-shell:not(.app-shell--fullscreen) .app-shell__notch:not(.app-shell__notch--right) {
   padding-left: 88px;
 }
@@ -105,52 +170,47 @@ textarea {
   display: none;
 }
 
-.app-shell:not(.app-shell--fullscreen) .app-shell__name-mark {
-  flex-basis: 21px;
-  width: 21px;
-  height: 21px;
-  /* Optically align the top-heavy triangle with the native circular controls. */
-  top: 2px;
-}
-
-.app-shell:not(.app-shell--fullscreen) .app-shell__name-mark svg {
-  width: 21px;
-  height: 21px;
-}
-
 .app-shell__name-logo,
 .app-shell__name-toggle {
   position: absolute;
   inset: 0;
-  transition:
-    opacity 180ms ease,
-    transform 180ms ease;
+  transition: opacity 120ms ease;
 }
 
 .app-shell__name-logo {
+  width: 100%;
+  height: 100%;
   opacity: 1;
-  transform: scale(1) rotate(0deg);
 }
 
 .app-shell__name-toggle {
+  inset: 50% auto auto 50%;
+  translate: -50% -50%;
   opacity: 0;
-  transform: scale(0.72) rotate(-6deg);
+}
+
+.app-shell__name-toggle,
+.app-shell__right-toggle > svg {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 24px;
+  font-weight: 500;
+  /* Keep the existing toggle footprint independent of wordmark font metrics. */
+  width: 25px;
+  height: 25px;
 }
 
 .app-shell__name:hover .app-shell__name-logo,
 .app-shell__name:focus-visible .app-shell__name-logo {
   opacity: 0;
-  transform: scale(0.72) rotate(6deg);
 }
 
 .app-shell__name:hover .app-shell__name-toggle,
 .app-shell__name:focus-visible .app-shell__name-toggle {
   opacity: 1;
-  transform: scale(1) rotate(0deg);
 }
 
 .app-shell__name:focus-visible {
-  outline: 2px solid #fafcff;
+  outline: 1px dashed #aaa;
   outline-offset: 3px;
 }
 
@@ -223,6 +283,8 @@ textarea {
   right: 4px;
 }
 
+.canvas-surface { height: 100%; flex: 1; min-height: 0; min-width: 0; position: relative; }
+
 .app-shell__surface {
   position: absolute;
   inset: 4px;
@@ -235,11 +297,11 @@ textarea {
 }
 
 .app-shell--sidebar-open .app-shell__surface {
-  left: 169px;
+  left: calc(var(--left-sidebar-width, 165px) + 4px);
 }
 
 .app-shell--right-sidebar-open .app-shell__surface {
-  right: 169px;
+  right: calc(var(--right-sidebar-width, 165px) + 4px);
 }
 
 .react-flow {
@@ -562,55 +624,6 @@ textarea {
   outline-offset: 2px;
 }
 
-.canvas-persistence-status {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: min(340px, calc(100vw - 36px));
-  min-height: 34px;
-  box-sizing: border-box;
-  border: 1px solid rgba(43, 43, 43, 0.14);
-  border-radius: 8px;
-  background: rgba(250, 252, 255, 0.94);
-  box-shadow: 0 10px 28px rgba(48, 47, 40, 0.14);
-  color: #36362f;
-  padding: 7px 10px;
-  font-size: 12px;
-  font-weight: 700;
-  pointer-events: auto;
-}
-
-.canvas-persistence-status__dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: #478a52;
-}
-
-.canvas-persistence-status[data-state='loading'] .canvas-persistence-status__dot,
-.canvas-persistence-status[data-state='saving'] .canvas-persistence-status__dot {
-  background: #4e6f9f;
-}
-
-.canvas-persistence-status[data-state='dirty'] .canvas-persistence-status__dot {
-  background: #a66d19;
-}
-
-.canvas-persistence-status[data-state='error'] {
-  border-color: rgba(184, 50, 50, 0.35);
-  color: #982929;
-}
-
-.canvas-persistence-status[data-state='error'] .canvas-persistence-status__dot {
-  background: #b83232;
-}
-
-
 .react-flow__pane,
 .react-flow__renderer,
 .react-flow__viewport {
@@ -718,6 +731,32 @@ textarea {
 .markdown-node__prose {
   outline: 0;
   min-height: 100%;
+}
+
+.editor-toolbar__formatting {
+  display: contents;
+}
+
+.document-title-error {
+  color: #942b2b;
+  background: #fbeaea;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.markdown-node__prose > h1:first-child,
+.markdown-node__preview > h1:first-child {
+  overflow-wrap: anywhere;
+}
+
+.markdown-node__prose > h1.is-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: #888;
+  pointer-events: none;
 }
 
 .markdown-node__body p,

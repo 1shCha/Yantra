@@ -1,10 +1,10 @@
 import { app, BrowserWindow } from 'electron';
 
-import { registerCanvasIpcHandlers } from './canvas-ipc';
+import { registerVaultIpcHandlers } from './vault-ipc';
 import { createWindow } from './window';
 
 app.whenReady().then(() => {
-  registerCanvasIpcHandlers();
+  registerVaultIpcHandlers();
   createWindow();
 
   app.on('activate', () => {

@@ -6,6 +6,7 @@ interface SelectionToolbarProps {
   onDeleteSelectedNodes: () => void;
   onGroupSelectedNodes: () => void;
   onUngroupSelectedGroup: () => void;
+  allowRemoval?: boolean;
 }
 
 export function SelectionToolbar({
@@ -16,6 +17,7 @@ export function SelectionToolbar({
   onDeleteSelectedNodes,
   onGroupSelectedNodes,
   onUngroupSelectedGroup,
+  allowRemoval = true,
 }: SelectionToolbarProps) {
   if (selectedNodeCount === 0 && !isGroupSelected) {
     return null;
@@ -32,13 +34,13 @@ export function SelectionToolbar({
         >
           Ungroup
         </button>
-        <button
+        {allowRemoval && <button
           className="selection-toolbar__delete"
           type="button"
           onClick={onDeleteSelectedGroup}
         >
           Delete
-        </button>
+        </button>}
       </aside>
     );
   }
@@ -55,9 +57,9 @@ export function SelectionToolbar({
           Group
         </button>
       ) : null}
-      <button className="selection-toolbar__delete" type="button" onClick={onDeleteSelectedNodes}>
+      {allowRemoval && <button className="selection-toolbar__delete" type="button" onClick={onDeleteSelectedNodes}>
         Delete
-      </button>
+      </button>}
     </aside>
   );
 }

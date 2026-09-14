@@ -1,0 +1,39 @@
+.vault-workspace, .vault-navigation { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.vault-navigation .vault-sidebar { flex: 1; min-height: 0; height: auto; }
+.vault-workspace > .vault-document-view, .vault-workspace > .vault-empty, .vault-workspace > .vault-file-state { flex: 1; min-height: 0; height: auto; }
+.vault-session-actions { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px 10px; border-top: 1px solid #252525; }
+.vault-session-actions button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 3px 2px; background: transparent; border: 0; color: #b5b5b5; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: left; border-radius: 0; cursor: pointer; }
+.vault-session-actions button svg { flex: 0 0 auto; color: #888; }
+.vault-session-actions button:hover:enabled { color: #fafcff; }
+.vault-session-actions button:focus-visible { outline: 1px dashed #aaa; outline-offset: -1px; }
+.vault-session-actions button:hover svg { color: #a5a5a5; }
+.vault-navigation button:disabled { opacity: .45; cursor: default; }
+.vault-destination { padding: 8px 12px 0; color: #888; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 20px; background: #fbeaea; color: #942b2b; font-size: 12px; overflow-wrap: anywhere; }
+.vault-error span { min-width: 0; flex: 1; }
+.vault-workspace > .vault-error:first-child { padding-top: 36px; }
+.vault-error button, .vault-file-state button { color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; padding: 4px 8px; }
+.vault-document-content--editable input[type='checkbox'] { pointer-events: auto; }
+.vault-document-content--editable .tiptap { min-height: 200px; outline: none; }
+.vault-workspace > .vault-canvas-view { flex: 1; min-height: 0; height: auto; }
+.vault-live-canvas { flex: 1; min-height: 0; display: flex; position: relative; }
+.vault-node-open { position: absolute; right: 10px; bottom: 10px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid #d6d6d6; border-radius: 4px; background: #fafcff; color: #666; }
+.vault-node-open:disabled { opacity: .4; }
+.vault-node-open:hover:enabled { background: #e6e6e6; }
+.vault-live-canvas .markdown-node__body, .vault-live-canvas .markdown-node__editor { padding-bottom: 42px; }
+.vault-live-missing-node { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 20px 20px 42px; box-sizing: border-box; overflow: auto; color: #8b3535; font-size: 13px; overflow-wrap: anywhere; }
+.vault-live-missing-node p { margin: 0; font-size: 12px; color: #666; }
+.vault-live-canvas .react-flow__handle { opacity: 0; pointer-events: none; }
+
+.vault-navigation .vault-action-menu, .vault-dialog--trash { border: 1px solid #444; border-radius: 0; background: #0b0b0b; color: #b5b5b5; box-shadow: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.vault-navigation .vault-action-menu button { border-radius: 0; color: #b5b5b5; font: inherit; font-size: 12px; }
+.vault-navigation .vault-action-menu button:hover, .vault-navigation .vault-action-menu button:focus-visible { background: transparent; color: #fafcff; }
+.vault-navigation .vault-action-menu button:focus-visible { outline: 1px dashed #888; outline-offset: -1px; }
+.vault-navigation .vault-action-menu button[data-danger='true'] { color: #c69e9e; }
+.vault-dialog--trash h2 { color: #fafcff; font-size: 14px; }
+.vault-dialog--trash .vault-delete-name { color: #e8e8e8; }
+.vault-dialog--trash .vault-dialog__hint { color: #aaa; }
+.vault-dialog--trash .vault-dialog__error { color: #d9a0a0; }
+.vault-dialog--trash .vault-dialog__button { border: 0; border-radius: 0; background: transparent; color: #ccc; padding: 6px 8px; }
+.vault-dialog--trash .vault-dialog__button:hover:enabled { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+.vault-dialog--trash button:focus-visible { outline: 1px dashed #aaa; outline-offset: -1px; }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode, type SVGProps } from 'react';
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
+import { selectionTouchesTitle, TITLE_FORMAT_HINT } from './protected-title';
 
 type HeadingLevel = 1 | 2 | 3;
 type TextAlignment = 'left' | 'center' | 'right';
@@ -12,6 +13,7 @@ interface EditorToolbarControlsProps {
   editor: Editor;
   menuSide: EditorToolbarMenuSide;
   readOnly?: boolean;
+  inline?: boolean;
 }
 
 interface ToolbarButtonProps {
@@ -20,10 +22,11 @@ interface ToolbarButtonProps {
   expanded?: boolean;
   label: string;
   pressed?: boolean;
-  onClick: () => void;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }
 
 interface EditorToolbarState {
+  titleLocked: boolean;
   canRedo: boolean;
   canUndo: boolean;
   codeBlockLanguage: string;
@@ -155,6 +158,7 @@ function getCodeBlockLanguage(editor: Editor): string {
 
 function readToolbarState(editor: Editor): EditorToolbarState {
   return {
+    titleLocked: selectionTouchesTitle(editor.state),
     canRedo: editor.can().redo(),
     canUndo: editor.can().undo(),
     codeBlockLanguage: getCodeBlockLanguage(editor),
@@ -240,11 +244,18 @@ function ToolbarButton({
   );
 }
 
-export function EditorToolbarControls({ editor, menuSide, readOnly = false }: EditorToolbarControlsProps) {
+export function EditorToolbarControls({ editor, menuSide, readOnly = false, inline = false }: EditorToolbarControlsProps) {
   const toolbarRef = useRef<HTMLElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
   const [openMenu, setOpenMenu] = useState<OpenToolbarMenu>(null);
   const [linkHref, setLinkHref] = useState('');
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const positionMenu = (element: HTMLElement, width: number) => {
+    if (!inline) return;
+    const rect = element.getBoundingClientRect();
+    setMenuPosition({ top: rect.bottom + 8, left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)) });
+  };
+  const popoverStyle = inline ? { position: 'fixed' as const, ...menuPosition, transform: 'none', maxWidth: 'calc(100vw - 24px)' } : undefined;
   const state = useEditorState({
     editor,
     selector: ({ editor: currentEditor }) => readToolbarState(currentEditor),
@@ -310,7 +321,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
     >
       <ToolbarButton
         label="Undo"
-        disabled={!state.canUndo}
+        disabled={readOnly || !state.canUndo}
         onClick={() => {
           editor.chain().focus().undo().run();
         }}
@@ -322,7 +333,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
       </ToolbarButton>
       <ToolbarButton
         label="Redo"
-        disabled={!state.canRedo}
+        disabled={readOnly || !state.canRedo}
         onClick={() => {
           editor.chain().focus().redo().run();
         }}
@@ -333,6 +344,8 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
         </svg>
       </ToolbarButton>
 
+      <fieldset className="editor-toolbar__formatting" disabled={readOnly || state.titleLocked}
+        aria-label="Formatting options" title={state.titleLocked ? TITLE_FORMAT_HINT : undefined}>
       <span className="editor-toolbar__divider" role="separator" />
 
       <span className="editor-toolbar__control">
@@ -343,7 +356,8 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
           aria-haspopup="menu"
           aria-expanded={openMenu === 'heading'}
           aria-pressed={state.headingLevel !== null}
-          onClick={() => {
+          onClick={(event) => {
+            positionMenu(event.currentTarget, 162);
             setOpenMenu((current) => (current === 'heading' ? null : 'heading'));
           }}
         >
@@ -352,8 +366,8 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
             <path d="m6 9 6 6 6-6" />
           </svg>
         </button>
-        {openMenu === 'heading' ? (
-          <div className="editor-toolbar__popover" role="menu" aria-label="Heading">
+        {openMenu === 'heading' && !state.titleLocked ? (
+          <div className="editor-toolbar__popover" style={popoverStyle} role="menu" aria-label="Heading">
             {HEADING_OPTIONS.map((option) => {
               const isActive = option.level === state.headingLevel;
               return (
@@ -501,7 +515,8 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
           label="Link"
           pressed={state.isLink || openMenu === 'link'}
           expanded={openMenu === 'link'}
-          onClick={() => {
+          onClick={(event) => {
+            positionMenu(event.currentTarget, 380);
             if (openMenu === 'link') {
               setOpenMenu(null);
               return;
@@ -516,8 +531,8 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
           </svg>
         </ToolbarButton>
-        {openMenu === 'link' ? (
-          <div className="editor-toolbar__popover editor-toolbar__popover--row">
+        {openMenu === 'link' && !state.titleLocked ? (
+          <div className="editor-toolbar__popover editor-toolbar__popover--row" style={popoverStyle}>
             <input
               ref={linkInputRef}
               className="editor-toolbar__link-input"
@@ -609,6 +624,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false }: Ed
           <path d="M3 18h18" />
         </svg>
       </ToolbarButton>
+      </fieldset>
     </aside>
   );
 }

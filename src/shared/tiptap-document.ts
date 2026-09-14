@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const tiptapNodeAttrsSchema = z.object({
+export const tiptapNodeAttrsSchema = z.object({
   checked: z.boolean().optional(),
   class: z.string().nullable().optional(),
   color: z.string().nullable().optional(),
@@ -41,7 +41,7 @@ export type TiptapDoc = z.infer<typeof tiptapDocSchema>;
 export function createEmptyTiptapDoc(): TiptapDoc {
   return {
     type: 'doc',
-    content: [{ type: 'paragraph' }],
+    content: [{ type: 'heading', attrs: { level: 1 } }],
   };
 }
 

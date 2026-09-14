@@ -1,33 +1,33 @@
 import { useCallback, useState } from 'react';
 import { FilePlus2, PanelsTopLeft } from 'lucide-react';
 import { WorkspaceFrame } from '../app/WorkspaceFrame';
-import { VaultSidebar, type VaultTreeEntry } from './VaultSidebar';
+import { VaultSidebar, type VaultTreeEntry } from '../vault-ui/VaultSidebar';
 import { DocumentPreview } from './DocumentPreview';
 import { CanvasPreview } from './CanvasPreview';
 import { FileStatePreview, VaultOverlayPreview, overlayStates, fileStates } from './VaultStatePreview';
-import type { PreviewSaveState } from './PreviewFileHeader';
+import type { VaultSaveState } from '../vault-ui/VaultFileHeader';
 import './vault-preview.css';
 
 const entries: readonly VaultTreeEntry[] = [
-  { id: 'overview', name: 'Overview.yantra_canvas', kind: 'canvas' },
+  { id: 'overview', name: 'Overview.yantraC', kind: 'canvas' },
   { id: 'research', name: 'Research', kind: 'folder', children: [
-    { id: 'ideas', name: 'Ideas.yantra_canvas', kind: 'canvas' },
-    { id: 'notes', name: 'Reading notes.yantra_doc', kind: 'document' },
+    { id: 'ideas', name: 'Ideas.yantraC', kind: 'canvas' },
+    { id: 'notes', name: 'Reading_notes.yantraD', kind: 'document' },
     { id: 'systems', name: 'Systems', kind: 'folder', children: [
-      { id: 'local', name: 'Local-first software and durable document identity.yantra_doc', kind: 'document' },
+      { id: 'local', name: 'Local-first_software_and_durable_document_identity.yantraD', kind: 'document' },
     ] },
   ] },
   { id: 'projects', name: 'Projects', kind: 'folder', children: [
-    { id: 'roadmap', name: 'Roadmap.yantra_canvas', kind: 'canvas' },
+    { id: 'roadmap', name: 'Roadmap.yantraC', kind: 'canvas' },
   ] },
   { id: 'unfiled', name: 'Unfiled', kind: 'folder', children: [
-    { id: 'untitled', name: 'Untitled.yantra_doc', kind: 'document' },
+    { id: 'untitled', name: 'Untitled.yantraD', kind: 'document' },
   ] },
 ];
 const expandedIds = new Set(['research', 'systems', 'unfiled']);
 const collapsedIds = new Set<string>();
 const scrollEntries: readonly VaultTreeEntry[] = [...entries, ...Array.from({ length: 40 }, (_, index): VaultTreeEntry => ({
-  id: `note-${index}`, name: `Research note ${index + 1}.yantra_doc`, kind: 'document',
+  id: `note-${index}`, name: `Research_note_${index + 1}.yantraD`, kind: 'document',
 }))];
 const states = ['Populated', 'Collapsed folders', 'Long names', 'Scrolling', 'Empty vault', 'Document', 'Document - long title', 'Document - unplaced', 'Canvas', 'Canvas - missing document', 'Save - Unsaved', 'Save - Saving', 'Save - Saved', 'Save - Failed', ...fileStates, ...overlayStates];
 function inertAction() {}
@@ -38,7 +38,7 @@ export default function VaultUiPreview() {
   const dismiss = useCallback(() => setDismissed(true), []);
   const isOverlay = overlayStates.some((value) => value === state);
   const isFileState = fileStates.some((value) => value === state);
-  const saveState: PreviewSaveState = state === 'Save - Unsaved' ? 'Unsaved' : state === 'Save - Saving' ? 'Saving' : state === 'Save - Failed' ? 'Failed' : 'Saved';
+  const saveState: VaultSaveState = state === 'Save - Unsaved' ? 'Unsaved' : state === 'Save - Saving' ? 'Saving' : state === 'Save - Failed' ? 'Failed' : 'Saved';
   const visibleEntries = state === 'Empty vault' ? [] : state === 'Scrolling' ? scrollEntries : entries;
   return (
     <WorkspaceFrame defaultSidebarOpen sidebar={

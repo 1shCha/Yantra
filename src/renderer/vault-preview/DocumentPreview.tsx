@@ -1,11 +1,11 @@
 import { EditorContent } from '@tiptap/react';
 import { useDocumentEditor } from '../editor/useDocumentEditor';
 import { EditorToolbarControls } from '../editor/EditorToolbarControls';
-import { PreviewFileHeader, type PreviewSaveState } from './PreviewFileHeader';
+import { VaultFileHeader, type VaultSaveState } from '../vault-ui/VaultFileHeader';
 import { readingNotes } from './preview-documents';
 
-export function DocumentPreview({ longTitle = false, unplaced = false, saveState = 'Saved' }: { longTitle?: boolean; unplaced?: boolean; saveState?: PreviewSaveState }) {
-  const editor = useDocumentEditor({
+export function DocumentPreview({ longTitle = false, unplaced = false, saveState = 'Saved' }: { longTitle?: boolean; unplaced?: boolean; saveState?: VaultSaveState }) {
+  const { editor } = useDocumentEditor({
     initialContent: readingNotes,
     editable: false,
     editorProps: {
@@ -16,14 +16,13 @@ export function DocumentPreview({ longTitle = false, unplaced = false, saveState
 
   return (
     <section className="vault-document-view">
-      <PreviewFileHeader
-        title={longTitle ? 'Local-first software and durable document identity across changing workspaces' : 'Reading notes'}
+      <VaultFileHeader
+        title={longTitle ? 'Local-first_software_and_durable_document_identity_across_changing_workspaces' : 'Reading_notes'}
         folder={unplaced ? 'My vault / Unfiled' : 'My vault / Research'}
         kind="document" canReveal={!unplaced} saveState={saveState}
-      />
-      <div className="vault-document-toolbar">
-        {editor && <EditorToolbarControls editor={editor} menuSide="below" readOnly />}
-      </div>
+      >
+        {editor && <div className="vault-document-toolbar"><EditorToolbarControls editor={editor} menuSide="below" inline readOnly /></div>}
+      </VaultFileHeader>
       <div className="vault-document-scroll" onClickCapture={(event) => {
         if (event.target instanceof Element && event.target.closest('a, input, label')) {
           event.preventDefault();

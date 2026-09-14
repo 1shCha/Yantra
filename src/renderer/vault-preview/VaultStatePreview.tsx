@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { nameValidationError } from '../vault/vault-organize-helpers';
 import { AlertCircle, FileQuestion, Folder, FolderOpen, LoaderCircle, X, FilePlus2, PanelsTopLeft, FolderPlus, Pencil, FolderInput, Trash2, LocateFixed, ExternalLink, Unlink } from 'lucide-react';
 
 export const overlayStates = [
@@ -14,8 +15,8 @@ export function FileStatePreview({ state, onRetry }: { state: string; onRetry?: 
   const Icon = loading ? LoaderCircle : state === 'File unavailable' ? FileQuestion : AlertCircle;
   return <section className="vault-file-state" role={loading ? 'status' : undefined}>
     <Icon size={28} className={loading ? 'vault-spin' : undefined} />
-    <h1>{loading ? 'Opening Reading notes' : state}</h1>
-    {!loading && <p>{state === 'File unavailable' ? 'Reading notes.yantra_doc could not be opened. The file may have been moved or removed.' : 'This document uses a newer format. Update Yantra to open it. Your file has not been changed.'}</p>}
+    <h1>{loading ? 'Opening Reading_notes' : state}</h1>
+    {!loading && <p>{state === 'File unavailable' ? 'Reading_notes.yantraD could not be opened. The file may have been moved or removed.' : 'This document uses a newer format. Update Yantra to open it. Your file has not been changed.'}</p>}
     {state === 'File unavailable' && <button className="vault-dialog__button" onClick={onRetry}>Try Again</button>}
   </section>;
 }
@@ -75,9 +76,9 @@ function ActionMenu({ state, onDismiss }: { state: keyof typeof menuActions; onD
 function NameDialog({ state, onDismiss }: { state: string; onDismiss: () => void }) {
   const create = state.startsWith('Create');
   const title = create ? state : 'Rename Document';
-  const [name, setName] = useState(state === 'Rename - invalid name' ? 'Research/notes' : state === 'Rename - name collision' ? 'Overview' : create ? 'Untitled' : 'Reading notes');
-  const extension = state === 'Create Folder' ? '' : state === 'Create Canvas' ? '.yantra_canvas' : '.yantra_doc';
-  const error = !name.trim() ? 'Enter a name.' : /[\\/:*?"<>|]/.test(name) ? 'Names cannot contain / \\ : * ? " < > |.' : state === 'Rename - name collision' && name.trim() === 'Overview' ? 'An item with this name already exists in Research.' : null;
+  const [name, setName] = useState(state === 'Rename - invalid name' ? 'Research/notes' : state === 'Rename - name collision' ? 'Overview' : create ? 'Untitled' : 'Reading_notes');
+  const extension = state === 'Create Folder' ? '' : state === 'Create Canvas' ? '.yantraC' : '.yantraD';
+  const error = nameValidationError(name) ?? (state === 'Rename - name collision' && name === 'Overview' ? 'An item with this name already exists in Research.' : null);
   return <PreviewDialog title={title} onDismiss={onDismiss}>
     <form onSubmit={(event) => { event.preventDefault(); if (!error) onDismiss(); }}>
       <label className="vault-dialog__label" htmlFor="vault-item-name">Name</label>
@@ -90,7 +91,7 @@ function NameDialog({ state, onDismiss }: { state: string; onDismiss: () => void
 
 function MoveDialog({ onDismiss }: { onDismiss: () => void }) {
   const [destination, setDestination] = useState('My vault');
-  return <PreviewDialog title="Move Reading notes" onDismiss={onDismiss}>
+  return <PreviewDialog title="Move Reading_notes" onDismiss={onDismiss}>
     <p>Choose a destination folder.</p>
     <fieldset className="vault-destination-list"><legend>Destination</legend>
       {['My vault', 'Research', 'Research / Systems', 'Projects', 'Unfiled'].map((folder) => <label key={folder} title={folder === 'Research' ? 'Current folder' : folder}>
@@ -112,8 +113,8 @@ export function VaultOverlayPreview({ state, onDismiss }: { state: string; onDis
   if (state === 'Move') return <MoveDialog onDismiss={onDismiss} />;
   const folder = state === 'Delete Folder - not empty';
   const doc = state === 'Delete Document';
-  return <PreviewDialog title={folder ? 'Folder is not empty' : doc ? 'Delete Reading notes?' : 'Delete Overview?'} onDismiss={onDismiss}>
-    <p>{folder ? 'Research contains files. Move or delete its contents before deleting this folder.' : doc ? 'Reading notes.yantra_doc will move to system Trash. Its node and connected edges will be removed from Overview.' : 'Overview.yantra_canvas will move to system Trash. Its documents will remain in your vault.'}</p>
+  return <PreviewDialog title={folder ? 'Folder is not empty' : doc ? 'Delete Reading_notes?' : 'Delete Overview?'} onDismiss={onDismiss}>
+    <p>{folder ? 'Research contains files. Move or delete its contents before deleting this folder.' : doc ? 'Reading_notes.yantraD will move to system Trash. Its node and connected edges will be removed from Overview.' : 'Overview.yantraC will move to system Trash. Its documents will remain in your vault.'}</p>
     {!folder && <p className="vault-dialog__hint">{doc ? 'The file can be recovered from system Trash. Canvas placement is not restored automatically.' : 'The canvas file can be recovered from system Trash.'}</p>}
     <div className="vault-dialog__footer"><button className="vault-dialog__button" onClick={onDismiss}>{folder ? 'Close' : 'Cancel'}</button>{!folder && <button className="vault-dialog__button vault-dialog__button--danger" onClick={onDismiss}>Move to Trash</button>}</div>
   </PreviewDialog>;

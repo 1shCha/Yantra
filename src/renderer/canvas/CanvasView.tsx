@@ -9,12 +9,12 @@ import {
   type NodeMouseHandler,
   type OnNodeDrag,
   type Viewport,
+  type NodeTypes,
 } from '@xyflow/react';
 
 import { REACT_FLOW_TEXT_NODE_TYPE } from '../../shared/json-canvas';
 import { getStackingZIndices } from '../../shared/stacking-order';
-import { WorkspaceFrame } from '../app/WorkspaceFrame';
-import { useCanvasStore } from '../stores/canvasStore';
+import { useCanvasState as useCanvasStore } from './canvas-store-context';
 import { AlignmentGuides } from './AlignmentGuides';
 import {
   calculateAlignment,
@@ -29,7 +29,6 @@ import {
   type NodeGeometry,
 } from './canvas-alignment-context';
 import { CanvasEditorProvider } from './canvas-editor-context';
-import { CanvasPersistenceStatus, type PersistenceStatus } from './CanvasPersistenceStatus';
 import { GroupOutlines } from './GroupOutlines';
 import { MarkdownNode } from './MarkdownNode';
 import {
@@ -67,8 +66,11 @@ function toAlignmentViewport(
   };
 }
 
-interface CanvasViewProps {
-  persistenceStatus: PersistenceStatus;
+interface CanvasSurfaceProps {
+  nodeTypes?: NodeTypes;
+  allowRemoval?: boolean;
+  defaultViewport?: Viewport;
+  onViewportChange?: (viewport: Viewport) => void;
 }
 
 interface GroupDragState {
@@ -78,7 +80,7 @@ interface GroupDragState {
   pointerId: number;
 }
 
-export function CanvasView({ persistenceStatus }: CanvasViewProps) {
+export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = true, defaultViewport, onViewportChange }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLElement>(null);
   const groupDragStateRef = useRef<GroupDragState | null>(null);
   const nodes = useCanvasStore((state) => state.nodes);
@@ -111,6 +113,7 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
       if (event.key !== 'Tab') {
         return;
       }
+      if (!isElementTarget(event.target) || !canvasRef.current?.contains(event.target)) return;
 
       event.preventDefault();
     };
@@ -383,11 +386,12 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
   );
 
   return (
-    <WorkspaceFrame frameRef={canvasRef}>
+    <section className="canvas-surface" ref={canvasRef} aria-label="Canvas">
         <CanvasEditorProvider>
           <CanvasAlignmentProvider value={alignmentContextValue}>
         {editingNodeId === null ? (
           <SelectionToolbar
+            allowRemoval={allowRemoval}
             canGroupSelectedNodes={canGroupSelectedNodes}
             isGroupSelected={selectedGroupId !== null}
             selectedNodeCount={selectedNodeIds.length}
@@ -397,11 +401,10 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
             onUngroupSelectedGroup={ungroupSelectedGroup}
           />
         ) : null}
-        <CanvasPersistenceStatus status={persistenceStatus} />
         <ReactFlow
           nodes={nodesWithInteractionState}
           edges={edges}
-          nodeTypes={nodeTypes}
+          nodeTypes={suppliedNodeTypes ?? nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeDoubleClick={handleNodeDoubleClick}
@@ -410,7 +413,10 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
           onNodeDragStop={handleNodeDragStop}
           onPaneClick={handlePaneClick}
           onDoubleClick={handleCanvasDoubleClick}
-          fitView
+          fitView={!defaultViewport}
+          defaultViewport={defaultViewport}
+          onMove={(_event, viewport) => onViewportChange?.(viewport)}
+          deleteKeyCode={allowRemoval ? ['Backspace', 'Delete'] : null}
           minZoom={0.1}
           maxZoom={4}
           zoomOnScroll={false}
@@ -450,6 +456,6 @@ export function CanvasView({ persistenceStatus }: CanvasViewProps) {
         </ReactFlow>
           </CanvasAlignmentProvider>
         </CanvasEditorProvider>
-    </WorkspaceFrame>
+    </section>
   );
 }

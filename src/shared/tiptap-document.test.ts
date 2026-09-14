@@ -8,8 +8,9 @@ import {
 } from './tiptap-document';
 
 describe('tiptapDocFromPlainText', () => {
-  it('wraps empty text in an empty paragraph document', () => {
+  it('starts empty documents with a Heading 1 title', () => {
     expect(tiptapDocFromPlainText('')).toEqual(createEmptyTiptapDoc());
+    expect(createEmptyTiptapDoc().content).toEqual([{ type: 'heading', attrs: { level: 1 } }]);
     expect(isTiptapDocEmpty(tiptapDocFromPlainText(''))).toBe(true);
   });
 

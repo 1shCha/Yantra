@@ -20,7 +20,7 @@ import {
   type MarkdownFlowNode,
 } from '../canvas/react-flow-mapping';
 
-interface CanvasState {
+export interface CanvasState {
   nodes: MarkdownFlowNode[];
   edges: MarkdownFlowEdge[];
   groups: CanvasGroup[];
@@ -130,7 +130,13 @@ function replaceGroupWithMembers(
   return nextLayerOrder;
 }
 
-export const useCanvasStore = create<CanvasState>()((set, get) => ({
+interface CanvasStoreOptions {
+  onCreateNode?: (position: { x: number; y: number }) => void;
+  onUpdateNodeDoc?: (nodeId: string, doc: TiptapDoc) => void;
+  allowRemoval?: boolean;
+}
+
+export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<CanvasState>()((set, get) => ({
   nodes: [],
   edges: [],
   groups: [],
@@ -143,6 +149,7 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
     const currentState = get();
     const canMoveNodes = currentState.selectedNodeIds.length <= 1;
     const nodeChanges = changes.filter((change) => {
+      if (options.allowRemoval === false && change.type === 'remove') return false;
       if (!canMoveNodes && change.type === 'position') {
         return false;
       }
@@ -169,11 +176,12 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
 
   onEdgesChange: (changes) => {
     set({
-      edges: applyEdgeChanges(changes, get().edges),
+      edges: applyEdgeChanges(options.allowRemoval === false ? changes.filter((change) => change.type !== 'remove') : changes, get().edges),
     });
   },
 
   createMarkdownNode: (position) => {
+    if (options.onCreateNode) { options.onCreateNode(position); return; }
     const node = createMarkdownNodeAt(position);
     const currentState = get();
     const nodes = [
@@ -259,9 +267,10 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
   },
 
   updateNodeDoc: (nodeId, doc) => {
+    if (options.onUpdateNodeDoc) { options.onUpdateNodeDoc(nodeId, doc); return; }
     set({
       nodes: get().nodes.map((node) => {
-        if (node.id !== nodeId || isSameTiptapDoc(node.data.doc, doc)) {
+        if (node.id !== nodeId || (node.data.doc && isSameTiptapDoc(node.data.doc, doc))) {
           return node;
         }
 
@@ -495,6 +504,7 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
   },
 
   deleteSelectedNodes: () => {
+    if (options.allowRemoval === false) return;
     const currentState = get();
     const selectedNodeIds = new Set(currentState.selectedNodeIds);
 
@@ -519,6 +529,7 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
   },
 
   deleteSelectedGroup: () => {
+    if (options.allowRemoval === false) return;
     const currentState = get();
     const selectedGroup = currentState.groups.find(
       (group) => group.id === currentState.selectedGroupId,
@@ -561,3 +572,5 @@ export const useCanvasStore = create<CanvasState>()((set, get) => ({
     });
   },
 }));
+
+export const useCanvasStore = createCanvasStore();

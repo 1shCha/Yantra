@@ -5,7 +5,7 @@ import { GroupOutlines } from '../canvas/GroupOutlines';
 import { renderTiptapDocToHtml } from '../editor/tiptap-schema';
 import type { MarkdownFlowNode } from '../canvas/react-flow-mapping';
 import { getStackingZIndices } from '../../shared/stacking-order';
-import { PreviewFileHeader } from './PreviewFileHeader';
+import { VaultFileHeader } from '../vault-ui/VaultFileHeader';
 import { readingNotes, questions, nextSteps } from './preview-documents';
 
 const nodes: MarkdownFlowNode[] = [
@@ -23,9 +23,13 @@ const edges = [
 function inertAction() {}
 
 function PreviewNode({ data }: NodeProps<MarkdownFlowNode>) {
-  const html = useMemo(() => renderTiptapDocToHtml(data.doc), [data.doc]);
+  const html = useMemo(() => data.doc ? renderTiptapDocToHtml(data.doc) : '', [data.doc]);
   if (data.missing === true) {
-    return <article className="markdown-node vault-missing-node"><FileQuestion size={24} /><strong>Document missing</strong><span>Reading notes.yantra_doc</span><p>The referenced file could not be found.</p><button disabled title="Document unavailable">Open Document</button></article>;
+    return <article className="markdown-node vault-preview-node vault-missing-node">
+      <Handle type="target" position={Position.Left} isConnectable={false} />
+      <FileQuestion size={24} /><strong>Document missing</strong><span>Reading_notes.yantraD</span><p>The referenced file could not be found.</p><button disabled title="Document unavailable">Open Document</button>
+      <Handle type="source" position={Position.Right} isConnectable={false} />
+    </article>;
   }
   return (
     <article className="markdown-node vault-preview-node">
@@ -44,7 +48,7 @@ export function CanvasPreview({ missingDocument = false }: { missingDocument?: b
   const displayedNodes = useMemo(() => previewNodes.map((node) => missingDocument && node.id === 'reading' ? { ...node, data: { ...node.data, missing: true } } : node), [missingDocument]);
   return (
     <section className="vault-canvas-view">
-      <PreviewFileHeader title="Overview" folder="My vault" kind="canvas" />
+      <VaultFileHeader title="Overview" folder="My vault" kind="canvas" />
       <div className="vault-canvas-stage">
         <ReactFlowProvider>
           <ReactFlow

@@ -4,12 +4,15 @@
   "description": "Local Electron app for a canvas-based LLM workspace",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "build:electron": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist-electron/main.cjs --external:electron --sourcemap && esbuild src/preload/index.ts --bundle --platform=node --format=cjs --outfile=dist-electron/preload.cjs --external:electron --sourcemap",
-    "start": "pnpm build:electron && sh -c 'vite --host 127.0.0.1 & VITE_PID=$!; electron .; kill $VITE_PID'",
+    "build:electron": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist-electron/main.cjs --external:electron --sourcemap --define:__VAULT_DIAGNOSTICS__=false && esbuild src/preload/index.ts --bundle --platform=node --format=cjs --outfile=dist-electron/preload.cjs --external:electron --sourcemap --define:__VAULT_DIAGNOSTICS__=false",
+    "start": "pnpm build:electron:dev && sh -c 'vite --host 127.0.0.1 & VITE_PID=$!; electron .; kill $VITE_PID'",
     "build": "pnpm build:electron && vite build",
     "typecheck": "tsc --build",
     "test": "vitest run",
-    "lint": "oxlint"
+    "test:vault-ui": "pnpm build && esbuild tools/vault-ui-smoke.ts --bundle --platform=node --format=cjs --outfile=dist-electron/vault-ui-smoke.cjs --external:electron && electron dist-electron/vault-ui-smoke.cjs",
+    "lint": "oxlint",
+    "build:electron:dev": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist-electron/main.cjs --external:electron --sourcemap --define:__VAULT_DIAGNOSTICS__=true && esbuild src/preload/index.ts --bundle --platform=node --format=cjs --outfile=dist-electron/preload.cjs --external:electron --sourcemap --define:__VAULT_DIAGNOSTICS__=true",
+    "test:vault-refactor": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --outfile=dist-electron/refactor-preload.cjs --external:electron --define:__VAULT_DIAGNOSTICS__=true && esbuild tools/vault-refactor-smoke.ts --bundle --platform=node --format=cjs --outfile=dist-electron/vault-refactor-smoke.cjs --external:electron --external:vite --define:__VAULT_DIAGNOSTICS__=true && electron dist-electron/vault-refactor-smoke.cjs"
   },
   "keywords": [
     "electron",

@@ -11,9 +11,9 @@ import {
   type ResizeParamsWithDirection,
 } from '@xyflow/react';
 
-import { isTiptapDocEmpty, type TiptapDoc } from '../../shared/tiptap-document';
+import { createEmptyTiptapDoc, isTiptapDocEmpty, type TiptapDoc } from '../../shared/tiptap-document';
 import { useDocumentEditor } from '../editor/useDocumentEditor';
-import { useCanvasStore } from '../stores/canvasStore';
+import { useCanvasState as useCanvasStore } from './canvas-store-context';
 import { useCanvasAlignment } from './canvas-alignment-context';
 import { useCanvasEditor } from './canvas-editor-context';
 import { EditorToolbar } from './EditorToolbar';
@@ -24,14 +24,19 @@ import {
   type MarkdownNodeData,
 } from './react-flow-mapping';
 import { renderTiptapDocToHtml } from '../editor/tiptap-schema';
+import type { OperationResult } from '../../shared/operation-result';
 
 const EDITOR_TOOLBAR_FLIP_SPACE_PX = 56;
 const EDITOR_TOOLBAR_Z_INDEX = 10_000;
+const emptyDoc = createEmptyTiptapDoc();
 
 interface MarkdownNodeComponentProps {
   id: string;
   data: MarkdownNodeData;
   selected: boolean;
+  editable?: boolean;
+  titleCommitError?: string | null;
+  onTitleCommit?: () => Promise<OperationResult>;
 }
 
 interface MarkdownNodeEditorProps {
@@ -40,6 +45,9 @@ interface MarkdownNodeEditorProps {
   selected: boolean;
   showCreatePlaceholder: boolean;
   onDocChange: (doc: TiptapDoc) => void;
+  editable: boolean;
+  titleCommitError?: string | null;
+  onTitleCommit?: () => Promise<OperationResult>;
 }
 
 function isSameGeometry(
@@ -85,13 +93,18 @@ function MarkdownNodeEditor({
   selected,
   showCreatePlaceholder,
   onDocChange,
+  editable,
+  titleCommitError,
+  onTitleCommit,
 }: MarkdownNodeEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [isEditorScrollable, setIsEditorScrollable] = useState(false);
   const { setEditor } = useCanvasEditor();
   const dismissCreatePlaceholder = useCanvasStore((state) => state.dismissCreatePlaceholder);
-  const editor = useDocumentEditor({
+  const { editor, titleError } = useDocumentEditor({
     initialContent: doc,
+    editable,
+    onTitleCommit,
     editorProps: {
       attributes: {
         class: 'markdown-node__prose',
@@ -156,12 +169,15 @@ function MarkdownNodeEditor({
         }
       }}
     >
+      {titleError && <div className="document-title-error" role="status">{titleError}</div>}
+      {titleCommitError && <div className="document-title-error" role="alert">{titleCommitError}</div>}
       <EditorContent className="markdown-node__editor-content" editor={editor} />
     </div>
   );
 }
 
-function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProps) {
+function MarkdownNodeComponent({ id, data, selected, editable = true, titleCommitError, onTitleCommit }: MarkdownNodeComponentProps) {
+  const doc = data.doc ?? emptyDoc;
   const nodeRef = useRef<HTMLElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [isBodyScrollable, setIsBodyScrollable] = useState(false);
@@ -176,10 +192,10 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
   // Keep the HTML prop stable during selection/geometry updates. Replacing
   // preview children on pointerdown removes the target before click/dblclick.
   const previewMarkup = useMemo(
-    () => ({ __html: renderTiptapDocToHtml(data.doc) }),
-    [data.doc],
+    () => ({ __html: renderTiptapDocToHtml(doc) }),
+    [doc],
   );
-  const isPreviewEmpty = isTiptapDocEmpty(data.doc);
+  const isPreviewEmpty = isTiptapDocEmpty(doc);
   const viewport = useViewport();
   const internalNode = useInternalNode(id);
   const nodeScreenTop =
@@ -374,17 +390,21 @@ function MarkdownNodeComponent({ id, data, selected }: MarkdownNodeComponentProp
         />
         {isEditorReady ? (
           <MarkdownNodeEditor
-            doc={data.doc}
+            doc={doc}
             nodeId={id}
             selected={selected}
             showCreatePlaceholder={data.showCreatePlaceholder === true}
             onDocChange={handleDocChange}
+            editable={editable}
+            titleCommitError={titleCommitError}
+            onTitleCommit={onTitleCommit}
           />
         ) : (
           <div
             ref={bodyRef}
             className={`markdown-node__body ${selected && isBodyScrollable ? 'nowheel' : ''}`}
           >
+            {titleCommitError && <div className="document-title-error" role="alert">{titleCommitError}</div>}
             {isPreviewEmpty ? (
               <span className="markdown-node__placeholder">Click to select</span>
             ) : (
