@@ -16,7 +16,7 @@ function VaultWorkspace({ store }: { store: ReturnType<typeof createVaultWorkspa
     return window.yantraCanvas?.onBeforeClose(() => store.getState().flush());
   }, [store]);
   return <WorkspaceFrame defaultSidebarOpen sidebar={navigation.sidebar}>
-    <VaultViewport store={store} navigation={navigation} />
+    <VaultViewport store={store} navigation={navigation.viewport} />
   </WorkspaceFrame>;
 }
 

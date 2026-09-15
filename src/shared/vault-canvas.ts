@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { OperationError } from './operation-result';
 import { vaultNameSchema } from './vault-organization';
 import { reconcileLayerOrder } from './stacking-order';
-import { jsonCanvasEdgeSchema, jsonCanvasGroupSchema } from './json-canvas';
+import { canvasEdgeSchema, canvasGroupSchema } from './canvas-elements';
 
 export const canvasNodeSchema = z.strictObject({
   id: z.uuid(), kind: z.literal('document'), documentId: z.uuid(),
@@ -12,8 +12,8 @@ export const canvasNodeSchema = z.strictObject({
 
 const presentationFields = {
   nodes: z.array(canvasNodeSchema),
-  edges: z.array(jsonCanvasEdgeSchema.strict()),
-  groups: z.array(jsonCanvasGroupSchema.strict()),
+  edges: z.array(canvasEdgeSchema.strict()),
+  groups: z.array(canvasGroupSchema.strict()),
   layerOrder: z.array(z.string()),
   viewport: z.strictObject({ x: z.number(), y: z.number(), zoom: z.number().min(0.1).max(4) }),
 };

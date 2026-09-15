@@ -1,56 +1,46 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
-import {
-  decodeJsonCanvasDocument,
-  JSON_CANVAS_TEXT_NODE_TYPE,
-  type JsonCanvasDocument,
-} from '../../shared/json-canvas';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MarkdownFlowNode } from '../canvas/react-flow-mapping';
 import { tiptapDocFromPlainText } from '../../shared/tiptap-document';
-import { useCanvasStore } from './canvasStore';
+import { createCanvasStore } from './canvasStore';
 
-const initialDocument = {
-  nodes: [
-    {
-      id: 'moving-node',
-      type: JSON_CANVAS_TEXT_NODE_TYPE,
-      x: 10,
-      y: 20,
-      width: 320,
-      height: 220,
-      doc: tiptapDocFromPlainText('Moving'),
-    },
-    {
-      id: 'stationary-node',
-      type: JSON_CANVAS_TEXT_NODE_TYPE,
-      x: 400,
-      y: 500,
-      width: 320,
-      height: 220,
-      doc: tiptapDocFromPlainText('Stationary'),
-    },
-  ],
-  edges: [
-    {
-      id: 'edge-1',
-      fromNode: 'moving-node',
-      toNode: 'stationary-node',
-    },
-  ],
-  groups: [],
-  layerOrder: ['moving-node', 'stationary-node'],
-} satisfies JsonCanvasDocument;
+const onCreateNode = vi.fn();
+const onUpdateNodeDoc = vi.fn();
+const useCanvasStore = createCanvasStore({ onCreateNode, onUpdateNodeDoc });
+function reference(id: string, x: number, y: number): MarkdownFlowNode {
+  return { id, type: 'markdownNode', position: { x, y }, width: 320, height: 220,
+    data: { canvasType: 'text', documentId: `document-${id}` } };
+}
+function resetStore() {
+  useCanvasStore.setState({ nodes: [reference('moving-node', 10, 20), reference('stationary-node', 400, 500)],
+    edges: [{ id: 'edge-1', source: 'moving-node', target: 'stationary-node' }],
+    groups: [], layerOrder: ['moving-node', 'stationary-node'], selectedNodeIds: [], selectedGroupId: null, editingNodeId: null });
+}
+function addReference() {
+  const state = useCanvasStore.getState();
+  useCanvasStore.setState({ nodes: [...state.nodes, reference('added-node', 800, 100)],
+    layerOrder: [...state.layerOrder, 'added-node'] });
+  useCanvasStore.getState().selectNode('added-node');
+}
+
+it('delegates creation and content updates to the document owner', () => {
+  resetStore();
+  const before = useCanvasStore.getState().nodes;
+  const doc = tiptapDocFromPlainText('Updated');
+  useCanvasStore.getState().createMarkdownNode({ x: 40, y: 60 });
+  useCanvasStore.getState().updateNodeDoc('moving-node', doc);
+  expect(onCreateNode).toHaveBeenCalledWith({ x: 40, y: 60 });
+  expect(onUpdateNodeDoc).toHaveBeenCalledWith('moving-node', doc);
+  expect(useCanvasStore.getState().nodes).toBe(before);
+  expect(before.every((node) => node.data.doc === undefined)).toBe(true);
+});
 
 describe('node activation', () => {
   beforeEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
-  });
-
-  afterEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(null);
+    resetStore();
   });
 
   it('allows a newly created node to be dragged without entering edit mode', () => {
-    useCanvasStore.getState().createMarkdownNode({ x: 100, y: 100 });
+    addReference();
     const nodeId = useCanvasStore.getState().selectedNodeIds[0]!;
 
     useCanvasStore.getState().activateNode(nodeId);
@@ -74,14 +64,10 @@ describe('node activation', () => {
 
 describe('setNodePosition', () => {
   beforeEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
+    resetStore();
   });
 
-  afterEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(null);
-  });
-
-  it('updates only the target node and serializes the snapped position', () => {
+  it('updates the target node while preserving its neighbors', () => {
     useCanvasStore.getState().setNodePosition('moving-node', { x: 140, y: 290 });
 
     expect(useCanvasStore.getState().nodes).toMatchObject([
@@ -94,57 +80,18 @@ describe('setNodePosition', () => {
         position: { x: 400, y: 500 },
       },
     ]);
-    expect(useCanvasStore.getState().getJsonCanvasDocument().nodes).toMatchObject([
-      {
-        id: 'moving-node',
-        x: 140,
-        y: 290,
-      },
-      {
-        id: 'stationary-node',
-        x: 400,
-        y: 500,
-      },
-    ]);
   });
 });
 
 describe('group lifecycle', () => {
   beforeEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
+    resetStore();
     useCanvasStore.getState().selectNode('moving-node');
     useCanvasStore.getState().toggleNodeSelection('stationary-node');
     useCanvasStore.getState().groupSelectedNodes();
   });
 
-  afterEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(null);
-  });
-
-  it('sanitizes overlapping memberships during direct document loading', () => {
-    useCanvasStore.getState().loadJsonCanvasDocument({
-      ...initialDocument,
-      groups: [
-        {
-          id: 'first-group',
-          nodeIds: ['moving-node', 'stationary-node'],
-        },
-        {
-          id: 'overlapping-group',
-          nodeIds: ['stationary-node', 'moving-node'],
-        },
-      ],
-    });
-
-    expect(useCanvasStore.getState().groups).toEqual([
-      {
-        id: 'first-group',
-        nodeIds: ['moving-node', 'stationary-node'],
-      },
-    ]);
-  });
-
-  it('creates and persists a non-nested group from selected nodes', () => {
+  it('creates a non-nested group from selected nodes', () => {
     const state = useCanvasStore.getState();
     const group = state.groups[0];
 
@@ -153,7 +100,6 @@ describe('group lifecycle', () => {
     });
     expect(state.selectedNodeIds).toEqual([]);
     expect(state.selectedGroupId).toBe(group?.id);
-    expect(state.getJsonCanvasDocument().groups).toEqual(state.groups);
 
     state.selectNode('moving-node');
     state.toggleNodeSelection('stationary-node');
@@ -210,68 +156,18 @@ describe('group lifecycle', () => {
     ]);
     expect(useCanvasStore.getState().groups).toEqual([]);
   });
-
-  it('restores groups, moved members, and edges after a serialized reload', () => {
-    const groupId = useCanvasStore.getState().selectedGroupId;
-    expect(groupId).not.toBeNull();
-    useCanvasStore.getState().moveGroupBy(groupId ?? '', { x: 40, y: 25 });
-
-    const savedDocument = useCanvasStore.getState().getJsonCanvasDocument();
-    const reloadedDocument = decodeJsonCanvasDocument(JSON.stringify(savedDocument));
-    useCanvasStore.getState().loadJsonCanvasDocument(reloadedDocument);
-
-    expect(useCanvasStore.getState()).toMatchObject({
-      groups: [
-        {
-          id: groupId,
-          nodeIds: ['moving-node', 'stationary-node'],
-        },
-      ],
-      nodes: [
-        {
-          id: 'moving-node',
-          position: { x: 50, y: 45 },
-        },
-        {
-          id: 'stationary-node',
-          position: { x: 440, y: 525 },
-        },
-      ],
-      edges: [
-        {
-          id: 'edge-1',
-          source: 'moving-node',
-          target: 'stationary-node',
-        },
-      ],
-      selectedGroupId: null,
-    });
-    expect(useCanvasStore.getState().layerOrder).toEqual([groupId]);
-  });
 });
 
 describe('stacking order', () => {
   beforeEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
+    resetStore();
   });
 
-  afterEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(null);
-  });
-
-  it('raises a dragged node above other nodes and keeps that order after reload', () => {
+  it('raises a node above other nodes', () => {
     useCanvasStore.getState().raiseNodeStacking('moving-node');
     expect(useCanvasStore.getState().layerOrder).toEqual(['stationary-node', 'moving-node']);
 
     useCanvasStore.getState().raiseNodeStacking('stationary-node');
-    expect(useCanvasStore.getState().layerOrder).toEqual(['moving-node', 'stationary-node']);
-
-    const savedDocument = useCanvasStore.getState().getJsonCanvasDocument();
-    expect(savedDocument.layerOrder).toEqual(['moving-node', 'stationary-node']);
-
-    useCanvasStore.getState().loadJsonCanvasDocument(
-      decodeJsonCanvasDocument(JSON.stringify(savedDocument)),
-    );
     expect(useCanvasStore.getState().layerOrder).toEqual(['moving-node', 'stationary-node']);
   });
 
@@ -283,7 +179,7 @@ describe('stacking order', () => {
     expect(groupId).not.toBeNull();
     expect(useCanvasStore.getState().layerOrder).toEqual([groupId]);
 
-    useCanvasStore.getState().createMarkdownNode({ x: 800, y: 100 });
+    addReference();
     const createdNodeId = useCanvasStore.getState().selectedNodeIds[0];
     expect(createdNodeId).toEqual(expect.any(String));
     expect(useCanvasStore.getState().layerOrder).toEqual([groupId, createdNodeId]);
@@ -293,31 +189,5 @@ describe('stacking order', () => {
 
     useCanvasStore.getState().raiseNodeStacking('moving-node');
     expect(useCanvasStore.getState().layerOrder).toEqual([createdNodeId, groupId]);
-  });
-});
-
-describe('create placeholder', () => {
-  beforeEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(initialDocument);
-  });
-
-  afterEach(() => {
-    useCanvasStore.getState().loadJsonCanvasDocument(null);
-  });
-
-  it('clears the one-time empty-editor placeholder after first edit', () => {
-    useCanvasStore.getState().createMarkdownNode({ x: 50, y: 60 });
-    const createdNodeId = useCanvasStore.getState().selectedNodeIds[0];
-    expect(createdNodeId).toEqual(expect.any(String));
-    expect(
-      useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)?.data
-        .showCreatePlaceholder,
-    ).toBe(true);
-
-    useCanvasStore.getState().dismissCreatePlaceholder(createdNodeId ?? '');
-    expect(
-      useCanvasStore.getState().nodes.find((node) => node.id === createdNodeId)?.data
-        .showCreatePlaceholder,
-    ).toBe(false);
   });
 });

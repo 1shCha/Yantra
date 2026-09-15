@@ -12,9 +12,10 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 
-import { REACT_FLOW_TEXT_NODE_TYPE } from '../../shared/json-canvas';
+import { REACT_FLOW_TEXT_NODE_TYPE } from './react-flow-mapping';
 import { getStackingZIndices } from '../../shared/stacking-order';
-import { useCanvasState as useCanvasStore } from './canvas-store-context';
+import { presentFlowNodes } from './flow-node-presentation';
+import { useCanvasStoreApi, useCanvasState as useCanvasStore } from './canvas-store-context';
 import { AlignmentGuides } from './AlignmentGuides';
 import {
   calculateAlignment,
@@ -81,6 +82,7 @@ interface GroupDragState {
 }
 
 export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = true, defaultViewport, onViewportChange }: CanvasSurfaceProps) {
+  const flowApi = useCanvasStoreApi();
   const canvasRef = useRef<HTMLElement>(null);
   const groupDragStateRef = useRef<GroupDragState | null>(null);
   const nodes = useCanvasStore((state) => state.nodes);
@@ -110,19 +112,26 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab') {
+      if ((event.key === 'Backspace' || event.key === 'Delete') && allowRemoval) {
+        if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+        if (!isElementTarget(event.target) || !canvasRef.current?.contains(event.target)) return;
+        if (event.target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')) return;
+        const state = flowApi.getState();
+        if (state.editingNodeId !== null) return;
+        if (state.selectedGroupId !== null || state.selectedNodeIds.length > 0) {
+          event.preventDefault();
+          if (state.selectedGroupId !== null) state.deleteSelectedGroup();
+          else state.deleteSelectedNodes();
+        }
         return;
       }
-      if (!isElementTarget(event.target) || !canvasRef.current?.contains(event.target)) return;
-
-      event.preventDefault();
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [allowRemoval, flowApi]);
 
   const nodeTypes = useMemo(
     () => ({
@@ -155,18 +164,14 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
     [createMarkdownNode, screenToFlowPosition],
   );
 
+  const [stackingUnitBases] = useState(() => new Map<string, number>());
   const stackingZIndices = useMemo(
-    () => getStackingZIndices(layerOrder, groups),
-    [groups, layerOrder],
+    () => getStackingZIndices(layerOrder, groups, stackingUnitBases),
+    [groups, layerOrder, stackingUnitBases],
   );
 
   const nodesWithInteractionState = useMemo(
-    () =>
-      nodes.map((node) => ({
-        ...node,
-        selected: selectedNodeIds.includes(node.id),
-        zIndex: stackingZIndices.nodeZIndexById.get(node.id) ?? 0,
-      })),
+    () => presentFlowNodes(nodes, selectedNodeIds, stackingZIndices.nodeZIndexById),
     [nodes, selectedNodeIds, stackingZIndices],
   );
 
@@ -278,7 +283,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
     }
 
     const referenceRects: AlignmentRect[] = [];
-    for (const node of nodes) {
+    for (const node of flowApi.getState().nodes) {
       const referenceRect = toCanvasNodeRect(node);
       if (referenceRect !== null && isAlignmentRectVisible(referenceRect, visibleViewport)) {
         referenceRects.push(referenceRect);
@@ -286,7 +291,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
     }
 
     return referenceRects;
-  }, [getViewport, nodes]);
+  }, [getViewport, flowApi]);
 
   const getFlowTolerance = useCallback(() => {
     return ALIGNMENT_TOLERANCE_SCREEN_PIXELS / getZoom();
@@ -296,7 +301,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
     () => ({
       applyResizeAlignment: (nodeId: string, geometry: NodeGeometry) => {
         const resizeStart = resizeStartBoundsRef.current;
-        if (resizeStart === null || resizeStart.nodeId !== nodeId || selectedNodeIds.length > 1) {
+        if (resizeStart === null || resizeStart.nodeId !== nodeId || flowApi.getState().selectedNodeIds.length > 1) {
           return { geometry, guides: null };
         }
 
@@ -333,7 +338,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
         setAlignmentResult(null);
       },
     }),
-    [getFlowTolerance, getReferenceRects, selectedNodeIds.length],
+    [getFlowTolerance, getReferenceRects, flowApi],
   );
 
   const getNodeAlignment = useCallback(
@@ -386,7 +391,12 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
   );
 
   return (
-    <section className="canvas-surface" ref={canvasRef} aria-label="Canvas">
+    <section className="canvas-surface" ref={canvasRef} aria-label="Canvas" tabIndex={-1}
+      onPointerDownCapture={(event) => {
+        if (isElementTarget(event.target) && !event.target.closest('input, textarea, select, button, [contenteditable="true"]')) {
+          canvasRef.current?.focus({ preventScroll: true });
+        }
+      }}>
         <CanvasEditorProvider>
           <CanvasAlignmentProvider value={alignmentContextValue}>
         {editingNodeId === null ? (
@@ -402,6 +412,8 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
           />
         ) : null}
         <ReactFlow
+          // Keep the live editor mounted when panning away, preserving focus and undo history.
+          onlyRenderVisibleElements={editingNodeId === null}
           nodes={nodesWithInteractionState}
           edges={edges}
           nodeTypes={suppliedNodeTypes ?? nodeTypes}
@@ -416,7 +428,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
           fitView={!defaultViewport}
           defaultViewport={defaultViewport}
           onMove={(_event, viewport) => onViewportChange?.(viewport)}
-          deleteKeyCode={allowRemoval ? ['Backspace', 'Delete'] : null}
+          deleteKeyCode={null}
           minZoom={0.1}
           maxZoom={4}
           zoomOnScroll={false}

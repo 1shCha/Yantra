@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Selection } from '@tiptap/pm/state';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { EditorContent } from '@tiptap/react';
 import {
   NodeResizer,
@@ -23,7 +24,7 @@ import {
   MARKDOWN_NODE_MIN_WIDTH,
   type MarkdownNodeData,
 } from './react-flow-mapping';
-import { renderTiptapDocToHtml } from '../editor/tiptap-schema';
+import { getDocumentPreview } from '../editor/document-preview';
 import type { OperationResult } from '../../shared/operation-result';
 
 const EDITOR_TOOLBAR_FLIP_SPACE_PX = 56;
@@ -41,9 +42,7 @@ interface MarkdownNodeComponentProps {
 
 interface MarkdownNodeEditorProps {
   doc: TiptapDoc;
-  nodeId: string;
   selected: boolean;
-  showCreatePlaceholder: boolean;
   onDocChange: (doc: TiptapDoc) => void;
   editable: boolean;
   titleCommitError?: string | null;
@@ -89,9 +88,7 @@ function stopToolbarPropagation(event: { stopPropagation: () => void }) {
 
 function MarkdownNodeEditor({
   doc,
-  nodeId,
   selected,
-  showCreatePlaceholder,
   onDocChange,
   editable,
   titleCommitError,
@@ -100,7 +97,6 @@ function MarkdownNodeEditor({
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [isEditorScrollable, setIsEditorScrollable] = useState(false);
   const { setEditor } = useCanvasEditor();
-  const dismissCreatePlaceholder = useCanvasStore((state) => state.dismissCreatePlaceholder);
   const { editor, titleError } = useDocumentEditor({
     initialContent: doc,
     editable,
@@ -113,11 +109,11 @@ function MarkdownNodeEditor({
     },
     onCreate: (currentEditor) => {
       const pos = lastMeaningfulCaretPos(currentEditor.state.doc);
-      currentEditor.chain().setTextSelection(pos).focus().run();
+      currentEditor.view.dispatch(currentEditor.state.tr.setSelection(Selection.near(currentEditor.state.doc.resolve(pos), -1)));
+      currentEditor.commands.focus();
     },
     onChange: (nextDoc) => {
       onDocChange(nextDoc);
-      dismissCreatePlaceholder(nodeId);
     },
   });
 
@@ -129,9 +125,8 @@ function MarkdownNodeEditor({
     setEditor(editor);
     return () => {
       setEditor(null);
-      dismissCreatePlaceholder(nodeId);
     };
-  }, [dismissCreatePlaceholder, editor, nodeId, setEditor]);
+  }, [editor, setEditor]);
 
   useEffect(() => {
     const container = editorContainerRef.current;
@@ -160,7 +155,6 @@ function MarkdownNodeEditor({
       className={`markdown-node__editor nodrag ${
         selected && isEditorScrollable ? 'nowheel' : ''
       }`}
-      data-create-placeholder={showCreatePlaceholder ? 'true' : 'false'}
       onMouseDown={(event) => {
         // Padding belongs to the editor too; do not focus the outer flow node.
         if (event.button === 0 && event.target === event.currentTarget && editor) {
@@ -176,6 +170,39 @@ function MarkdownNodeEditor({
   );
 }
 
+// Only the active toolbar subscribes to viewport and node-position changes.
+function ActiveNodeToolbar({ id }: { id: string }) {
+  const viewport = useViewport();
+  const internalNode = useInternalNode(id);
+  const nodeScreenTop =
+    internalNode === undefined
+      ? EDITOR_TOOLBAR_FLIP_SPACE_PX
+      : internalNode.internals.positionAbsolute.y * viewport.zoom + viewport.y;
+  const toolbarPosition =
+    nodeScreenTop < EDITOR_TOOLBAR_FLIP_SPACE_PX ? Position.Bottom : Position.Top;
+  const menuSide = toolbarPosition === Position.Top ? 'below' : 'above';
+
+  return (
+    <NodeToolbar
+      isVisible
+      position={toolbarPosition}
+      align="center"
+      offset={8}
+      className="nodrag nopan nowheel"
+      style={{ zIndex: EDITOR_TOOLBAR_Z_INDEX }}
+      onPointerDown={stopToolbarPropagation}
+      onDoubleClick={stopToolbarPropagation}
+    >
+      <EditorToolbar menuSide={menuSide} />
+    </NodeToolbar>
+  );
+}
+
+const DocumentPreview = memo(function DocumentPreview({ doc }: { doc: TiptapDoc }) {
+  if (isTiptapDocEmpty(doc)) return <span className="markdown-node__placeholder">Click to select</span>;
+  return <div className="markdown-node__preview" dangerouslySetInnerHTML={getDocumentPreview(doc)} />;
+});
+
 function MarkdownNodeComponent({ id, data, selected, editable = true, titleCommitError, onTitleCommit }: MarkdownNodeComponentProps) {
   const doc = data.doc ?? emptyDoc;
   const nodeRef = useRef<HTMLElement>(null);
@@ -189,22 +216,6 @@ function MarkdownNodeComponent({ id, data, selected, editable = true, titleCommi
   const updateNodeDoc = useCanvasStore((state) => state.updateNodeDoc);
   const { applyResizeAlignment, clearAlignmentGuides, setResizeStartBounds } =
     useCanvasAlignment();
-  // Keep the HTML prop stable during selection/geometry updates. Replacing
-  // preview children on pointerdown removes the target before click/dblclick.
-  const previewMarkup = useMemo(
-    () => ({ __html: renderTiptapDocToHtml(doc) }),
-    [doc],
-  );
-  const isPreviewEmpty = isTiptapDocEmpty(doc);
-  const viewport = useViewport();
-  const internalNode = useInternalNode(id);
-  const nodeScreenTop =
-    internalNode === undefined
-      ? EDITOR_TOOLBAR_FLIP_SPACE_PX
-      : internalNode.internals.positionAbsolute.y * viewport.zoom + viewport.y;
-  const toolbarPosition =
-    nodeScreenTop < EDITOR_TOOLBAR_FLIP_SPACE_PX ? Position.Bottom : Position.Top;
-  const menuSide = toolbarPosition === Position.Top ? 'below' : 'above';
 
   const handleDocChange = useCallback(
     (doc: TiptapDoc) => {
@@ -359,18 +370,7 @@ function MarkdownNodeComponent({ id, data, selected, editable = true, titleCommi
 
   return (
     <>
-      <NodeToolbar
-        isVisible={isEditing && isEditorReady}
-        position={toolbarPosition}
-        align="center"
-        offset={8}
-        className="nodrag nopan nowheel"
-        style={{ zIndex: EDITOR_TOOLBAR_Z_INDEX }}
-        onPointerDown={stopToolbarPropagation}
-        onDoubleClick={stopToolbarPropagation}
-      >
-        <EditorToolbar menuSide={menuSide} />
-      </NodeToolbar>
+      {isEditing && isEditorReady && <ActiveNodeToolbar id={id} />}
       <section
         ref={nodeRef}
         className="markdown-node"
@@ -391,9 +391,7 @@ function MarkdownNodeComponent({ id, data, selected, editable = true, titleCommi
         {isEditorReady ? (
           <MarkdownNodeEditor
             doc={doc}
-            nodeId={id}
             selected={selected}
-            showCreatePlaceholder={data.showCreatePlaceholder === true}
             onDocChange={handleDocChange}
             editable={editable}
             titleCommitError={titleCommitError}
@@ -405,14 +403,7 @@ function MarkdownNodeComponent({ id, data, selected, editable = true, titleCommi
             className={`markdown-node__body ${selected && isBodyScrollable ? 'nowheel' : ''}`}
           >
             {titleCommitError && <div className="document-title-error" role="alert">{titleCommitError}</div>}
-            {isPreviewEmpty ? (
-              <span className="markdown-node__placeholder">Click to select</span>
-            ) : (
-              <div
-                className="markdown-node__preview"
-                dangerouslySetInnerHTML={previewMarkup}
-              />
-            )}
+            <DocumentPreview doc={doc} />
           </div>
         )}
       </section>

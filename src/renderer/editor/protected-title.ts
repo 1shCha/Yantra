@@ -20,6 +20,7 @@ export const ProtectedDocument = TiptapNode.create({
   name: 'doc',
   topNode: true,
   content: 'heading block*',
+  renderMarkdown: (node, helpers) => helpers.renderChildren(node.content ?? [], '\n\n'),
 });
 
 export function selectionTouchesTitle(state: EditorState): boolean {

@@ -47,6 +47,43 @@ to prevent overwrites. A sidebar-created document belongs in the selected folder
 or the root when no folder is selected. It does not need a canvas appearance.
 `.yantraC` files can be created and opened from the sidebar or empty workspace.
 
+## Equations
+
+Document bodies support `inlineMath` and `blockMath` nodes with the original LaTeX
+in `attrs.latex`. The same document data is used by standalone editors and canvas
+appearances; rendered KaTeX HTML is not persisted. Existing documents need no
+migration. Older Yantra builds that do not recognize math nodes reject documents
+containing them under the existing strict content validation.
+
+Use the ∑ toolbar action to insert an inline or block equation. Click an equation
+while editing to change its source with a live preview. Save commits one undoable
+edit; Cancel or Escape discards the draft. Invalid LaTeX remains visible and editable.
+Equations are not allowed in the protected title. KaTeX fonts are bundled locally,
+and wide block equations scroll inside canvas nodes.
+
+Pasting plain Markdown recognizes inline `$…$` and `\(…\)`, standalone display
+`$$…$$` and `\[…\]`, and fenced `math` blocks. Dollar notation conservatively
+leaves currency and bare numeric amounts literal; use `\(5\)` for numeric math.
+Backticked text stays inline code. Select it (or place the caret in it) and use
+**Convert to equation** to explicitly convert it. Code blocks and paste-as-plain-text
+remain literal, and the protected title retains its existing paste rules.
+
+Rich HTML pastes preserve their normal formatting. KaTeX/MathML TeX annotations,
+`data-math-source`, and Yantra math nodes are normalized to LaTeX-backed nodes;
+visual HTML and MathML copies of the same equation are not imported twice. HTML
+without math uses the normal editor paste path. Plain-text equation copying and
+Markdown serialization use `\(…\)` / `\[…\]` to retain unambiguous source.
+Inline code and blockquotes are supported in storage and both rendering modes.
+
+Canvas previews render only while mounted and reuse HTML cached by immutable
+document identity. Idle canvases cull offscreen nodes. Culling pauses during editing
+to keep the editor and undo history alive when panning away. Only the active node's
+toolbar subscribes to viewport position; editing does not generate hidden previews.
+
+`pnpm test:math-ui` exercises insertion, editing, cancellation, undo/redo, saving,
+reopening, canvas previews, Markdown/HTML paste, native math copy/paste, and
+code/currency/title preservation in an isolated temporary vault.
+
 ## Protected Titles and Filenames
 
 New documents start with an empty Heading 1. In both the standalone editor and
@@ -326,3 +363,18 @@ canvases, and nested folders through the production Electron handler.
 Tests use temporary directories and controlled API implementations; they do not
 touch the user's vault or legacy canvas. Native picker selection and closing with
 pending edits should also be checked manually in Electron.
+
+### Sidebar ordering
+
+Vault metadata may include an optional `sidebarOrder` array of vault-relative paths.
+The sidebar ranks siblings by this array while always placing folders above files.
+Unlisted entries follow in the default alphabetical order. Drag near the top or
+bottom of a sibling row to reorder within its folder/file group; dropping in the
+middle of a folder row still moves the item into that folder. Ordering survives
+refreshes and reopening the vault, and paths are updated after in-app moves and renames.
+
+Document content validation is defined once in `src/shared/tiptap-document.ts`
+and reused by editor updates, Markdown clipboard imports, and vault file parsing.
+Unknown nodes, marks, and attributes are rejected rather than silently removed.
+Ordered-list `attrs.type` and link `attrs.title` are preserved as optional nullable
+strings. Existing version-1 files without these attributes remain valid.

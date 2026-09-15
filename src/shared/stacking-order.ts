@@ -113,13 +113,18 @@ export function stackingUnitIdForNode(
 export function getStackingZIndices(
   layerOrder: readonly string[],
   groups: readonly LayerGroup[],
+  // Optional per-canvas cache keeps surviving layers stable when lower layers disappear.
+  unitBases?: Map<string, number>,
 ): StackingZIndices {
   const groupById = new Map(groups.map((group) => [group.id, group]));
   const groupOutlineZIndexById = new Map<string, number>();
   const nodeZIndexById = new Map<string, number>();
 
-  for (const [index, unitId] of layerOrder.entries()) {
-    const zBase = index * STACKING_STRIDE + 1;
+  let previousBase = 1 - STACKING_STRIDE;
+  for (const unitId of layerOrder) {
+    const zBase = Math.max(unitBases?.get(unitId) ?? 1, previousBase + STACKING_STRIDE);
+    unitBases?.set(unitId, zBase);
+    previousBase = zBase;
     const group = groupById.get(unitId);
     if (group === undefined) {
       nodeZIndexById.set(unitId, zBase + CONTENT_SLOT);
@@ -133,6 +138,10 @@ export function getStackingZIndices(
     }
   }
 
+  if (unitBases) {
+    const current = new Set(layerOrder);
+    for (const id of unitBases.keys()) if (!current.has(id)) unitBases.delete(id);
+  }
   return {
     groupOutlineZIndexById,
     nodeZIndexById,

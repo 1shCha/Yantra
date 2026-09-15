@@ -136,3 +136,24 @@ describe('tiptapDocSchema', () => {
     );
   });
 });
+
+// Validate at the editor boundary too: unsupported content must not be silently
+// stripped before the stricter file decoder has a chance to inspect it.
+describe('strict shared content validation', () => {
+  it.each([
+    { type: 'futureNode' },
+    { type: 'paragraph', futureField: true },
+    { type: 'paragraph', attrs: { futureSetting: true } },
+    { type: 'text', text: 'Keep me', marks: [{ type: 'futureMark' }] },
+    { type: 'text', text: 'Keep me', marks: [{ type: 'bold', futureField: true }] },
+    { type: 'text', text: 'Keep me', marks: [{ type: 'link', attrs: { href: 'https://example.com', futureSetting: true } }] },
+  ])('rejects unsupported nested content without mutating it: %j', (node) => {
+    const doc = { type: 'doc', content: [{ type: 'blockquote', content: [node] }] };
+    const before = JSON.stringify(doc);
+    expect(tiptapDocSchema.safeParse(doc).success).toBe(false);
+    expect(JSON.stringify(doc)).toBe(before);
+  });
+  it('rejects unknown document fields', () => {
+    expect(tiptapDocSchema.safeParse({ type: 'doc', content: [], futureField: true }).success).toBe(false);
+  });
+});

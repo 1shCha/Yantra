@@ -79,3 +79,24 @@ describe('getStackingZIndices', () => {
     );
   });
 });
+
+describe('stable stacking during deletion', () => {
+  it('preserves surviving layers and appends above them without compacting gaps', () => {
+    const bases = new Map<string, number>();
+    const before = getStackingZIndices(['a', 'b', 'c'], [], bases);
+    const after = getStackingZIndices(['b', 'c'], [], bases);
+    expect(after.nodeZIndexById).toEqual(new Map([...before.nodeZIndexById].filter(([id]) => id !== 'a')));
+    const appended = getStackingZIndices(['b', 'c', 'd'], [], bases);
+    expect(appended.nodeZIndexById.get('b')).toBe(before.nodeZIndexById.get('b'));
+    expect(appended.nodeZIndexById.get('d')).toBeGreaterThan(appended.nodeZIndexById.get('c')!);
+    expect(bases.has('a')).toBe(false);
+  });
+
+  it('still raises moved nodes and keeps group outlines below members', () => {
+    const bases = new Map<string, number>();
+    getStackingZIndices(['a', groupA.id, 'b'], [groupA], bases);
+    const raised = getStackingZIndices([groupA.id, 'b', 'a'], [groupA], bases);
+    expect(raised.nodeZIndexById.get('a')).toBeGreaterThan(raised.nodeZIndexById.get('b')!);
+    expect(raised.nodeZIndexById.get('a-1')).toBeGreaterThan(raised.groupOutlineZIndexById.get(groupA.id)!);
+  });
+});

@@ -1,11 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { getSchema } from '@tiptap/core';
-import { tiptapDocSchema } from '../../shared/tiptap-document';
+import { tiptapDocSchema, tiptapNodeSchema, tiptapMarkSchema, tiptapNodeTypeSchema, tiptapMarkTypeSchema } from '../../shared/tiptap-document';
+import { decodeDocument, newDocument } from '../../shared/vault-format';
 import { readingNotes } from '../vault-preview/preview-documents';
 
 import { documentEditorExtensions, documentSchemaExtensions, renderTiptapDocToHtml } from './tiptap-schema';
 
 describe('shared document schema', () => {
+  it('matches the shared storage node and mark vocabulary, including extension defaults', () => {
+    for (const extensions of [documentEditorExtensions, documentSchemaExtensions]) {
+      const schema = getSchema(extensions);
+      expect(Object.keys(schema.nodes).filter(name => name !== 'doc').sort())
+        .toEqual([...tiptapNodeTypeSchema.options].sort());
+      expect(Object.keys(schema.marks).sort()).toEqual([...tiptapMarkTypeSchema.options].sort());
+      for (const [name, type] of Object.entries(schema.nodes)) {
+        if (name === 'doc' || name === 'text') continue;
+        const json = type.create().toJSON();
+        expect(tiptapNodeSchema.parse(json)).toEqual(json);
+      }
+      for (const type of Object.values(schema.marks)) {
+        const json = type.create().toJSON();
+        expect(tiptapMarkSchema.parse(json)).toEqual(json);
+      }
+    }
+  });
+
   it('round-trips rich document content through both editor and preview schemas', () => {
     const editorSchema = getSchema(documentEditorExtensions);
     const previewSchema = getSchema(documentSchemaExtensions);
@@ -16,6 +35,26 @@ describe('shared document schema', () => {
     previewDoc.check();
     expect(previewDoc.toJSON()).toEqual(editorDoc.toJSON());
     expect(editorSchema.nodeFromJSON(storedDoc).eq(editorDoc)).toBe(true);
+  });
+
+  it('preserves ordered-list styles and link titles through disk and preview round trips', () => {
+    const schema = getSchema(documentEditorExtensions);
+    const model = schema.nodeFromJSON({ type: 'doc', content: [
+      { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Notes' }] },
+      { type: 'orderedList', attrs: { start: 3, type: 'A' }, content: [
+        { type: 'listItem', content: [{ type: 'paragraph', content: [
+          { type: 'text', text: 'Reference', marks: [{ type: 'link', attrs: { href: 'https://example.com', title: 'Source title' } }] },
+        ] }] },
+      ] },
+    ] });
+    model.check();
+    const doc = tiptapDocSchema.parse(model.toJSON());
+    const reopened = decodeDocument(JSON.stringify({ ...newDocument('Notes'), doc }));
+    expect(reopened.doc).toEqual(model.toJSON());
+    expect(schema.nodeFromJSON(reopened.doc).eq(model)).toBe(true);
+    const html = renderTiptapDocToHtml(reopened.doc);
+    expect(html).toContain('type="A"');
+    expect(html).toContain('title="Source title"');
   });
 
   it('keeps the same content types when adding editor-only behavior', () => {

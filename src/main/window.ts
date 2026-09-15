@@ -1,10 +1,10 @@
 import path from 'node:path';
 
-import { BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 
 import { installCloseFlushHandler } from './close-flush';
 
-const DEV_SERVER_URL = 'http://127.0.0.1:5173';
+import { loadRenderer } from './renderer-loader';
 
 function isHttpUrl(url: string): boolean {
   try {
@@ -13,19 +13,6 @@ function isHttpUrl(url: string): boolean {
   } catch {
     return false;
   }
-}
-
-async function loadRenderer(window: BrowserWindow, attempts = 40): Promise<void> {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      await window.loadURL(DEV_SERVER_URL);
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-
-  await window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
 
 export function createWindow(): void {
@@ -70,5 +57,6 @@ export function createWindow(): void {
       void shell.openExternal(url);
     }
   });
-  void loadRenderer(mainWindow);
+  void loadRenderer(mainWindow, { isPackaged: app.isPackaged, development: process.env.YANTRA_DEV_SERVER === '1',
+    filePath: path.join(__dirname, '..', 'dist', 'index.html') });
 }

@@ -1,25 +1,34 @@
 import { z } from 'zod';
 
-export const tiptapNodeAttrsSchema = z.object({
+// Shared by editor updates, clipboard imports, and vault persistence. Unknown
+// content must fail validation rather than disappear during the next save.
+export const tiptapNodeAttrsSchema = z.strictObject({
   checked: z.boolean().optional(),
   class: z.string().nullable().optional(),
   color: z.string().nullable().optional(),
   href: z.string().nullable().optional(),
   language: z.string().nullable().optional(),
+  latex: z.string().optional(),
   level: z.number().int().min(1).max(6).optional(),
   rel: z.string().nullable().optional(),
   start: z.number().int().optional(),
   target: z.string().nullable().optional(),
+  title: z.string().nullable().optional(),
+  type: z.string().nullable().optional(),
   textAlign: z.string().nullable().optional(),
 });
 
-const tiptapMarkSchema = z.object({
-  type: z.string(),
+export const tiptapMarkTypeSchema = z.enum(['bold', 'italic', 'highlight', 'link', 'code']);
+
+export const tiptapMarkSchema = z.strictObject({
+  type: tiptapMarkTypeSchema,
   attrs: tiptapNodeAttrsSchema.optional(),
 });
 
-export const tiptapNodeSchema = z.object({
-  type: z.string(),
+export const tiptapNodeTypeSchema = z.enum(['paragraph', 'heading', 'text', 'hardBreak', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'codeBlock', 'inlineMath', 'blockMath', 'blockquote']);
+
+export const tiptapNodeSchema = z.strictObject({
+  type: tiptapNodeTypeSchema,
   text: z.string().optional(),
   attrs: tiptapNodeAttrsSchema.optional(),
   marks: z.array(tiptapMarkSchema).optional(),
@@ -28,7 +37,7 @@ export const tiptapNodeSchema = z.object({
   },
 });
 
-export const tiptapDocSchema = z.object({
+export const tiptapDocSchema = z.strictObject({
   type: z.literal('doc'),
   get content() {
     return z.array(tiptapNodeSchema).optional();
@@ -77,6 +86,8 @@ export function tiptapDocFromPlainText(text: string): TiptapDoc {
 
 function isTiptapNodeEmpty(node: TiptapNode): boolean {
   if (
+    node.type === 'inlineMath' ||
+    node.type === 'blockMath' ||
     node.type === 'bulletList' ||
     node.type === 'codeBlock' ||
     node.type === 'hardBreak' ||

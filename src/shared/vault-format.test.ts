@@ -1,10 +1,11 @@
+import { tiptapDocSchema } from './tiptap-document';
 import { describe, expect, it } from 'vitest';
-import { decodeDocument, documentContentSchema, newDocument } from './vault-format';
+import { decodeDocument, newDocument } from './vault-format';
 import { readingNotes } from '../renderer/vault-preview/preview-documents';
 
 describe('public document format', () => {
   it('round-trips the existing rich editor content', () => {
-    const document = { ...newDocument('Reading_notes'), doc: documentContentSchema.parse(readingNotes) };
+    const document = { ...newDocument('Reading_notes'), doc: tiptapDocSchema.parse(readingNotes) };
     expect(decodeDocument(JSON.stringify(document))).toEqual(document);
   });
 

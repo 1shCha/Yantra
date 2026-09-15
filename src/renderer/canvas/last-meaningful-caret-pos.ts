@@ -4,6 +4,10 @@ export function lastMeaningfulCaretPos(doc: ProseMirrorNode): number {
   let found = 1;
 
   doc.descendants((node, pos) => {
+    if (node.type.name === 'inlineMath' || node.type.name === 'blockMath') {
+      found = pos + node.nodeSize;
+      return;
+    }
     if (!node.isText) {
       return;
     }

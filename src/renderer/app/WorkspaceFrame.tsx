@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -8,6 +9,8 @@ import {
   type ReactNode,
   type Ref,
 } from 'react';
+
+import { fitSidebarWidths } from './sidebar-widths';
 
 import yantraLogo from '../assets/yantra-logo.svg';
 import { SidebarIcon } from '../vault-ui/SidebarIcon';
@@ -55,8 +58,17 @@ export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defa
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isBrandSidebarOpen, setIsBrandSidebarOpen] = useState(defaultSidebarOpen);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false);
-  const [leftWidth, setLeftWidth] = useState(() => readStoredWidth('left', LEFT_DEFAULT_WIDTH));
-  const [rightWidth, setRightWidth] = useState(() => readStoredWidth('right', RIGHT_DEFAULT_WIDTH));
+  const [requestedLeftWidth, setLeftWidth] = useState(() => readStoredWidth('left', LEFT_DEFAULT_WIDTH));
+  const [requestedRightWidth, setRightWidth] = useState(() => readStoredWidth('right', RIGHT_DEFAULT_WIDTH));
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+  const { left: leftWidth, right: rightWidth } = fitSidebarWidths(
+    viewportWidth, { left: requestedLeftWidth, right: requestedRightWidth }, isBrandSidebarOpen, isRightSidebarOpen,
+  );
   const [resizingSide, setResizingSide] = useState<SidebarSide | null>(null);
   const dragRef = useRef<SidebarDrag | null>(null);
 
@@ -73,10 +85,10 @@ export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defa
     const otherWidth = side === 'left'
       ? (isRightSidebarOpen ? rightWidth : 0)
       : (isBrandSidebarOpen ? leftWidth : 0);
-    const available = window.innerWidth - otherWidth - MIN_SURFACE_WIDTH;
+    const available = Math.max(0, viewportWidth - otherWidth - MIN_SURFACE_WIDTH - 8);
     const min = side === 'left' ? LEFT_MIN_WIDTH : RIGHT_MIN_WIDTH;
     const max = side === 'left' ? Math.min(LEFT_MAX_WIDTH, available) : available;
-    return Math.max(min, Math.min(width, max));
+    return Math.max(Math.min(min, max), Math.min(width, max));
   };
 
   const applyWidth = (side: SidebarSide, width: number) => {
@@ -145,6 +157,38 @@ export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defa
     storeWidth(side, width);
   };
 
+  const leftToggle = useMemo(() => (
+      <div className="app-shell__notch" aria-label="Yantra">
+        <button
+          type="button"
+          className="app-shell__name"
+          aria-label={isBrandSidebarOpen ? 'Yantra — close sidebar' : 'Yantra — open sidebar'}
+          aria-expanded={isBrandSidebarOpen}
+          onClick={() => setIsBrandSidebarOpen((isOpen) => !isOpen)}
+        >
+          <span className="app-shell__name-mark" aria-hidden="true">
+            <img className="app-shell__name-logo" src={yantraLogo} alt="" />
+            <SidebarIcon className="app-shell__name-toggle" kind="panelLeft" size={25} />
+          </span>
+          <span className="app-shell__name-text">Yantra</span>
+        </button>
+      </div>
+  ), [isBrandSidebarOpen]);
+  const rightToggle = useMemo(() => (
+      <div className="app-shell__notch app-shell__notch--right">
+        <button
+          type="button"
+          className="app-shell__right-toggle"
+          aria-label={isRightSidebarOpen ? 'Close right sidebar' : 'Open right sidebar'}
+          aria-expanded={isRightSidebarOpen}
+          aria-controls="right-sidebar"
+          onClick={() => setIsRightSidebarOpen((isOpen) => !isOpen)}
+        >
+          <SidebarIcon kind="panelRight" size={25} />
+        </button>
+      </div>
+  ), [isRightSidebarOpen]);
+
   return (
     <main
       ref={frameRef}
@@ -169,21 +213,7 @@ export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defa
       >
         {sidebar}
       </aside>
-      <div className="app-shell__notch" aria-label="Yantra">
-        <button
-          type="button"
-          className="app-shell__name"
-          aria-label={isBrandSidebarOpen ? 'Yantra — close sidebar' : 'Yantra — open sidebar'}
-          aria-expanded={isBrandSidebarOpen}
-          onClick={() => setIsBrandSidebarOpen((isOpen) => !isOpen)}
-        >
-          <span className="app-shell__name-mark" aria-hidden="true">
-            <img className="app-shell__name-logo" src={yantraLogo} alt="" />
-            <SidebarIcon className="app-shell__name-toggle" kind="panelLeft" size={25} />
-          </span>
-          <span className="app-shell__name-text">Yantra</span>
-        </button>
-      </div>
+      {leftToggle}
       <aside
         id="right-sidebar"
         className={`app-shell__sidebar app-shell__sidebar--right${isRightSidebarOpen ? ' app-shell__sidebar--open' : ''}`}
@@ -193,18 +223,7 @@ export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defa
       >
         {rightSidebar}
       </aside>
-      <div className="app-shell__notch app-shell__notch--right">
-        <button
-          type="button"
-          className="app-shell__right-toggle"
-          aria-label={isRightSidebarOpen ? 'Close right sidebar' : 'Open right sidebar'}
-          aria-expanded={isRightSidebarOpen}
-          aria-controls="right-sidebar"
-          onClick={() => setIsRightSidebarOpen((isOpen) => !isOpen)}
-        >
-          <SidebarIcon kind="panelRight" size={25} />
-        </button>
-      </div>
+      {rightToggle}
       <div className="app-shell__surface">
         {children}
       </div>

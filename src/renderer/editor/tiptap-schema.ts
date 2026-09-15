@@ -1,3 +1,6 @@
+import { inlineMathTokenizer, blockMathTokenizer } from './math-markdown';
+import { InlineMath, BlockMath } from '@tiptap/extension-mathematics';
+import { mathOptions, renderMath } from './math';
 import Highlight from '@tiptap/extension-highlight';
 import Link from '@tiptap/extension-link';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
@@ -11,17 +14,27 @@ import type { TiptapDoc } from '../../shared/tiptap-document';
 import { ProtectedDocument, ProtectedTitle } from './protected-title';
 
 export const documentSchemaExtensions = [
-  Node.create({ name: 'doc', topNode: true, content: 'block+' }),
+  Node.create({ name: 'doc', topNode: true, content: 'block+', renderMarkdown: (node, helpers) => helpers.renderChildren(node.content ?? [], '\n\n') }),
   StarterKit.configure({
     document: false,
-    blockquote: false,
-    code: false,
     horizontalRule: false,
     link: false,
     strike: false,
     underline: false,
     trailingNode: false,
   }),
+  InlineMath.extend({
+    addInputRules: () => [],
+    markdownTokenizer: inlineMathTokenizer,
+    renderText: ({ node }) => `\\(${node.attrs.latex}\\)`,
+    renderMarkdown: node => `\\(${node.attrs?.latex ?? ''}\\)`,
+  }).configure({ katexOptions: { ...mathOptions, displayMode: false } }),
+  BlockMath.extend({
+    addInputRules: () => [],
+    markdownTokenizer: blockMathTokenizer,
+    renderText: ({ node }) => `\\[\n${node.attrs.latex}\n\\]`,
+    renderMarkdown: node => `\\[\n${node.attrs?.latex ?? ''}\n\\]`,
+  }).configure({ katexOptions: { ...mathOptions, displayMode: true } }),
   TaskList,
   TaskItem.configure({
     nested: true,
@@ -66,5 +79,24 @@ function withLineBreaksInEmptyBlocks(html: string): string {
 }
 
 export function renderTiptapDocToHtml(doc: TiptapDoc): string {
-  return withLineBreaksInEmptyBlocks(generateHTML(doc, documentSchemaExtensions));
+  // Node views are not used by generateHTML. Substitute only placeholders made
+  // by these serializers, never user HTML or a scan of ordinary document text.
+  const equations: string[] = [];
+  const extensions = documentSchemaExtensions.map((extension) =>
+    extension instanceof Node && (extension.name === 'inlineMath' || extension.name === 'blockMath')
+      ? extension.extend({
+        renderHTML({ node }) {
+          const block = node.type.name === 'blockMath';
+          const index = equations.push(renderMath(node.attrs.latex, block)) - 1;
+          return [block ? 'div' : 'span', {
+            class: 'tiptap-mathematics-render',
+            'data-type': block ? 'block-math' : 'inline-math',
+          }, ['span', { 'data-yantra-math-preview': String(index) }]];
+        },
+      }) : extension);
+  const html = generateHTML(doc, extensions).replace(
+    /<span data-yantra-math-preview="(\d+)"><\/span>/g,
+    (_match, index: string) => equations[Number(index)]!,
+  );
+  return withLineBreaksInEmptyBlocks(html);
 }

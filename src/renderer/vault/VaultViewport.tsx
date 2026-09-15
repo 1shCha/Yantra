@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { FilePlus2, PanelsTopLeft } from 'lucide-react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
@@ -10,13 +11,14 @@ import { VaultCanvasView } from './VaultCanvasView';
 
 const saveLabels = { clean: 'Saved', dirty: 'Unsaved', saving: 'Saving', error: 'Failed' } satisfies Record<SaveStatus['state'], VaultSaveState>;
 
-export function VaultViewport({ store, navigation }: { store: ReturnType<typeof createVaultWorkspace>; navigation: ReturnType<typeof useVaultNavigation> }) {
+export const VaultViewport = memo(function VaultViewport({ store, navigation }: { store: ReturnType<typeof createVaultWorkspace>; navigation: ReturnType<typeof useVaultNavigation>['viewport'] }) {
   const state = useStore(store, useShallow((current) => ({
-    vault: current.vault, documents: current.documents, canvases: current.canvases, titleErrors: current.titleErrors,
+    session: current.vault?.sessionId, vaultName: current.vault?.name, documents: current.documents, canvases: current.canvases, titleErrors: current.titleErrors,
     activeDocumentId: current.activeDocumentId, activeCanvasId: current.activeCanvasId, activePath: current.activePath,
+    documentDeleting: current.deletingDocumentIds.has(current.activeDocumentId ?? ''),
     busy: current.busy, loadState: current.loadState, error: current.error, retry: current.retry, retryCanvas: current.retryCanvas,
   })));
-  const session = state.vault?.sessionId ?? '';
+  const session = state.session ?? '';
   const active = state.activeDocumentId ? state.documents.get(state.activeDocumentId) : undefined;
   const activeCanvas = state.activeCanvasId ? state.canvases.get(state.activeCanvasId) : undefined;
   const failures = [...state.documents.values()].filter((document) => document.save.state === 'error');
@@ -46,19 +48,19 @@ export function VaultViewport({ store, navigation }: { store: ReturnType<typeof 
         <span>{canvas.file.title}: {canvas.save.error || 'Could not save canvas.'}</span>
         <button disabled={state.busy} onClick={() => { void state.retryCanvas(canvas.file.id).catch(() => { /* The queue retains the error. */ }); }}>Retry canvas save</button>
       </div>)}
-      {active && state.vault ? <section className="vault-document-view">
-        <DocumentEditor key={`${session}:${active.file.id}:${active.reloadRevision}`} file={active.file} busy={state.busy} store={store}
+      {active && state.session ? <section className="vault-document-view">
+        <DocumentEditor key={`${session}:${active.file.id}:${active.reloadRevision}`} file={active.file} busy={state.busy || state.documentDeleting} store={store}
           saveState={saveLabels[active.save.state]} commitError={state.titleErrors.get(active.file.id)}
           onRetry={() => { void state.retry(active.file.id).catch(() => { /* Failure is displayed above. */ }); }}
           focusRequested={navigation.focusDocumentId === active.file.id} onFocusHandled={() => navigation.setFocusDocumentId(null)} />
-      </section> : activeCanvas && state.vault ? <section className="vault-canvas-view">
-        <VaultFileHeader title={activeCanvas.file.title} folder={`${state.vault.name} / ${activeCanvas.path.split('/').slice(0, -1).join('/')}`}
+      </section> : activeCanvas && state.session ? <section className="vault-canvas-view">
+        <VaultFileHeader title={activeCanvas.file.title} folder={`${state.vaultName} / ${activeCanvas.path.split('/').slice(0, -1).join('/')}`}
           kind="canvas" busy={state.busy} saveState={canvasSaveState}
           onRetry={() => { void retryActiveCanvas(); }} />
         <VaultCanvasView key={`${session}:${activeCanvas.file.id}`} workspace={store} canvasId={activeCanvas.file.id} busy={state.busy} />
       </section> : state.busy || state.loadState === 'loading' ? <div className="vault-file-state" role="status">Loading...</div>
         : state.loadState === 'error' ? <div className="vault-file-state"><h1>{state.activePath?.endsWith('.yantraC') ? 'Unable to open canvas' : 'Unable to open document'}</h1><button onClick={() => { if (state.activePath) navigation.openFile(state.activePath); }}>Retry</button></div>
-          : <div className="vault-empty">{state.vault && <div className="vault-empty__actions"><button onClick={() => navigation.createDocument(navigation.folder)}><FilePlus2 size={17} />New Document</button><button onClick={() => navigation.createCanvas(navigation.folder)}><PanelsTopLeft size={17} />New Canvas</button></div>}</div>}
+          : <div className="vault-empty">{state.session && <div className="vault-empty__actions"><button onClick={() => navigation.createDocument(navigation.folder)}><FilePlus2 size={17} />New Document</button><button onClick={() => navigation.createCanvas(navigation.folder)}><PanelsTopLeft size={17} />New Canvas</button></div>}</div>}
     </div>
   );
-}
+});

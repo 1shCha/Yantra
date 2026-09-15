@@ -1,9 +1,10 @@
+import { tiptapDocSchema } from '../shared/tiptap-document';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { VaultRepository } from './vault-repository';
-import { decodeDocument, documentContentSchema, newDocument } from '../shared/vault-format';
+import { decodeDocument, newDocument } from '../shared/vault-format';
 import { tiptapDocFromPlainText } from '../shared/tiptap-document';
 
 describe('VaultRepository', () => {
@@ -30,7 +31,7 @@ describe('VaultRepository', () => {
     const second = await repo.createDocument('Research');
     expect(first.document.id).not.toBe(second.document.id);
     expect([first.path, second.path]).toEqual(['Research/Untitled.yantraD', 'Research/Untitled_2.yantraD']);
-    first.document.doc = documentContentSchema.parse(tiptapDocFromPlainText('Persisted notes'));
+    first.document.doc = tiptapDocSchema.parse(tiptapDocFromPlainText('Persisted notes'));
     await repo.saveDocument(first.document);
     const reopened = await VaultRepository.open(root);
     expect((await reopened.scan()).entries[0]?.children).toHaveLength(2);
@@ -95,7 +96,7 @@ describe('VaultRepository', () => {
     } finally {
       await fs.rename(unavailable, root);
     }
-    const draft = { ...document.document, doc: documentContentSchema.parse(tiptapDocFromPlainText('After failed scan')) };
+    const draft = { ...document.document, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('After failed scan')) };
     await repo.saveDocument(draft);
     await repo.saveCanvas({ ...canvas.canvas, viewport: { x: 40, y: 50, zoom: 0.75 } });
     expect((await repo.readDocument(document.path)).doc).toEqual(draft.doc);
@@ -126,7 +127,7 @@ describe('VaultRepository', () => {
   it('accepts new disk baselines only after a successful refresh, not an ordinary scan', async () => {
     const repo = await VaultRepository.open(root, true);
     const created = await repo.createDocument('');
-    const external = { ...created.document, doc: documentContentSchema.parse(tiptapDocFromPlainText('External edit')) };
+    const external = { ...created.document, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('External edit')) };
     await fs.writeFile(path.join(root, created.path), JSON.stringify(external));
     await repo.scan();
     await expect(repo.saveDocument(external)).rejects.toMatchObject({ failure: { code: 'conflict' } });
@@ -142,7 +143,7 @@ describe('VaultRepository', () => {
     const repo = await VaultRepository.open(root, true);
     const document = await repo.createDocument('');
     const canvas = await repo.createCanvas('');
-    const externalDoc = { ...document.document, doc: documentContentSchema.parse(tiptapDocFromPlainText('External text')) };
+    const externalDoc = { ...document.document, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('External text')) };
     const externalCanvas = { ...canvas.canvas, viewport: { x: 123, y: 456, zoom: 0.5 } };
     await fs.writeFile(path.join(root, document.path), JSON.stringify(externalDoc));
     await fs.writeFile(path.join(root, canvas.path), JSON.stringify(externalCanvas));

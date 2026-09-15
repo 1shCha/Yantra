@@ -1,13 +1,15 @@
+import { tiptapDocSchema } from '../shared/tiptap-document';
 import { testVaultApi } from "../test/vault-api";
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultRepository } from './vault-repository';
 import { createVaultWorkspace } from '../renderer/stores/vaultWorkspace';
 import type { VaultOperations } from '../shared/vault-api';
-import { documentContentSchema } from '../shared/vault-format';
+
 import { tiptapDocFromPlainText } from '../shared/tiptap-document';
+import { orderEntries } from '../shared/vault-organization';
 import { documentTitle, withDocumentTitle } from '../shared/document-title';
 
 describe('vault organization and placement', () => {
@@ -19,6 +21,7 @@ describe('vault organization and placement', () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'yantra-organization-'));
     repo = await VaultRepository.open(root, true);
     api = {
+      deleteCanvasNodes: (_session, canvasId, nodeIds) => repo.deleteCanvasNodes(canvasId, nodeIds),
       refresh: () => repo.refresh(), deleteEntry: (_session, relative) => repo.deleteEntry(relative), retryRecovery: () => repo.retryRecovery(),
       restore: () => repo.scan(), choose: async () => null,
       readDocument: (_session, relative, mode) => repo.readDocument(relative, mode),
@@ -30,7 +33,7 @@ describe('vault organization and placement', () => {
       createNodeDocument: () => repo.createNodeDocument(),
       createFolder: (_session, folder, name) => repo.createFolder(folder, name),
       renameEntry: (_session, relative, name, title) => repo.renameEntry(relative, name, title),
-      moveEntry: (_session, relative, folder) => repo.moveEntry(relative, folder),
+      moveEntry: (_session, relative, folder, placement) => repo.moveEntry(relative, folder, placement),
     };
     store = createVaultWorkspace(testVaultApi(api));
     await store.getState().restore();
@@ -38,6 +41,125 @@ describe('vault organization and placement', () => {
   afterEach(async () => {
     await store.getState().flush().catch(() => { /* Save failures are deliberate in these tests. */ });
     await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it('persists sibling ordering with folders first across refresh, reopen and rename', async () => {
+    await store.getState().createFolder('', 'A');
+    await store.getState().createFolder('', 'B');
+    await store.getState().createDocument('');
+    await store.getState().createCanvas('');
+    expect((await store.getState().moveEntry('B', '', { anchor: 'A', side: 'before' })).status).toBe('success');
+    expect((await store.getState().moveEntry('Untitled.yantraD', '', { anchor: 'Untitled.yantraC', side: 'before' })).status).toBe('success');
+    const expected = ['B', 'A', 'Untitled.yantraD', 'Untitled.yantraC'];
+    expect((await repo.refresh()).entries.map((entry) => entry.path)).toEqual(expected);
+    expect((await (await VaultRepository.open(root)).scan()).entries.map((entry) => entry.path)).toEqual(expected);
+    await store.getState().renameEntry('B', 'Z');
+    expect((await (await VaultRepository.open(root)).scan()).entries.map((entry) => entry.path)).toEqual(['Z', ...expected.slice(1)]);
+    await store.getState().createFolder('Z', 'First');
+    await store.getState().createFolder('Z', 'Second');
+    await store.getState().moveEntry('Z/Second', 'Z', { anchor: 'Z/First', side: 'before' });
+    await store.getState().renameEntry('Z', 'Renamed');
+    const snapshot = await (await VaultRepository.open(root)).scan();
+    expect(snapshot.entries[0]?.children?.map((entry) => entry.path)).toEqual(['Renamed/Second', 'Renamed/First']);
+  });
+
+  it('updates order optimistically without flushing drafts or changing unrelated references, and rolls back failures', async () => {
+    await store.getState().createFolder('', 'A');
+    await store.getState().createFolder('', 'B');
+    await store.getState().createDocument();
+    store.getState().updateDocument(store.getState().activeDocumentId!, tiptapDocFromPlainText('Still editing'));
+    const before = store.getState();
+    const save = vi.spyOn(api, 'saveDocument');
+    let release!: () => void;
+    const gate = { promise: new Promise<void>((resolve) => { release = resolve; }), resolve: () => release() };
+    api.moveEntry = async () => { await gate.promise; throw new Error('Cannot save ordering'); };
+    const result = store.getState().moveEntry('B', '', { anchor: 'A', side: 'before' });
+    await Promise.resolve();
+    const pending = store.getState();
+    expect(pending.busy).toBe(false);
+    expect(orderEntries(pending.vault!.entries, pending.vault!.metadata.sidebarOrder)[0]?.path).toBe('B');
+    expect(pending.documents).toBe(before.documents);
+    expect(pending.canvases).toBe(before.canvases);
+    expect(pending.vault!.entries).toBe(before.vault!.entries);
+    expect(pending.vault!.appearances).toBe(before.vault!.appearances);
+    expect(pending.activePath).toBe(before.activePath);
+    expect(save).not.toHaveBeenCalled();
+    gate.resolve();
+    expect((await result).status).toBe('failure');
+    expect(store.getState().vault!.metadata.sidebarOrder).toBe(before.vault!.metadata.sidebarOrder);
+    expect(store.getState().documents).toBe(before.documents);
+    expect(store.getState().error).toBe('Cannot save ordering');
+    save.mockRestore();
+  });
+
+  it('serializes rapid reorders and a following rename, and close flush waits for ordering', async () => {
+    for (const name of ['A', 'B', 'C']) await store.getState().createFolder('', name);
+    let release!: () => void;
+    const gate = { promise: new Promise<void>((resolve) => { release = resolve; }), resolve: () => release() };
+    const original = api.moveEntry;
+    let calls = 0;
+    api.moveEntry = async (...args) => { calls++; if (calls === 1) await gate.promise; return original(...args); };
+    const first = store.getState().moveEntry('C', '', { anchor: 'A', side: 'before' });
+    const second = store.getState().moveEntry('B', '', { anchor: 'C', side: 'before' });
+    const rename = store.getState().renameEntry('A', 'Z');
+    let flushed = false;
+    const flushing = store.getState().flush().then(() => { flushed = true; });
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    expect(flushed).toBe(false);
+    gate.resolve();
+    expect((await first).status).toBe('success');
+    expect((await second).status).toBe('success');
+    expect((await rename).status).toBe('success');
+    await flushing;
+    expect((await repo.scan()).entries.map((entry) => entry.path)).toEqual(['B', 'C', 'Z']);
+    expect(orderEntries(store.getState().vault!.entries, store.getState().vault!.metadata.sidebarOrder).map((entry) => entry.path)).toEqual(['B', 'C', 'Z']);
+  });
+
+  it('leaves in-flight document navigation valid during a reorder', async () => {
+    await store.getState().createFolder('', 'A');
+    await store.getState().createFolder('', 'B');
+    const created = await repo.createDocument('');
+    await store.getState().refresh();
+    let release!: () => void;
+    const gate = { promise: new Promise<void>((resolve) => { release = resolve; }), resolve: () => release() };
+    const original = api.readDocument;
+    api.readDocument = async (...args) => { await gate.promise; return original(...args); };
+    const opening = store.getState().openDocument(created.path);
+    await store.getState().moveEntry('B', '', { anchor: 'A', side: 'before' });
+    gate.resolve();
+    expect((await opening).status).toBe('success');
+    expect(store.getState().activeDocumentId).toBe(created.document.id);
+    expect(store.getState().loadState).toBe('ready');
+  });
+
+  it('keeps the workspace on the committed path when saving order after a rename fails', async () => {
+    await store.getState().createFolder('', 'A');
+    await store.getState().createFolder('', 'B');
+    await store.getState().moveEntry('B', '', { anchor: 'A', side: 'before' });
+    const lstat = fs.lstat.bind(fs);
+    const spy = vi.spyOn(fs, 'lstat').mockImplementation(async (...args) => {
+      if (args[0] === path.join(repo.root, '.yantra/vault.json')) throw new Error('Metadata unavailable');
+      return lstat(...args);
+    });
+    try {
+      expect((await store.getState().renameEntry('B', 'Z')).status).toBe('success');
+      expect(store.getState().vault?.entries.some((entry) => entry.path === 'Z')).toBe(true);
+      expect(store.getState().error).toContain('sidebar order could not be saved');
+      expect((await fs.stat(path.join(root, 'Z'))).isDirectory()).toBe(true);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('rejects cross-group, cross-folder and missing reorder targets without changing disk order', async () => {
+    await repo.createFolder('', 'A');
+    await repo.createFolder('', 'B');
+    const file = await repo.createDocument('');
+    await repo.createFolder('A', 'Nested');
+    const before = await fs.readFile(path.join(root, '.yantra/vault.json'), 'utf8');
+    await expect(repo.moveEntry(file.path, '', { anchor: 'A', side: 'before' })).rejects.toThrow('Folders stay above files');
+    await expect(repo.moveEntry('B', 'A', { anchor: 'A/Nested', side: 'before' })).rejects.toThrow('same folder');
+    await expect(repo.moveEntry('B', '', { anchor: 'Missing', side: 'after' })).rejects.toThrow('existing');
+    expect(await fs.readFile(path.join(root, '.yantra/vault.json'), 'utf8')).toBe(before);
   });
 
   it('creates folders exclusively and rejects invalid or protected names and locations', async () => {
@@ -64,7 +186,7 @@ describe('vault organization and placement', () => {
     await repo.createFolder('', 'Research');
     await repo.moveEntry('Notes.yantraD', 'Research');
     await repo.moveEntry('Map.yantraC', 'Research');
-    await repo.saveDocument({ ...renamed.document!, doc: documentContentSchema.parse(tiptapDocFromPlainText('After move')) });
+    await repo.saveDocument({ ...renamed.document!, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('After move')) });
     expect((await repo.readDocument('Research/Notes.yantraD')).id).toBe(document.document.id);
     expect((await repo.readCanvas('Research/Map.yantraC')).id).toBe(canvas.canvas.id);
     await expect(repo.saveDocument(document.document)).rejects.toThrow('identity');
@@ -88,8 +210,8 @@ describe('vault organization and placement', () => {
   it('serializes writes with folder moves so old paths are never recreated', async () => {
     await repo.createFolder('', 'A');
     const created = await repo.createDocument('A');
-    const first = { ...created.document, doc: documentContentSchema.parse(tiptapDocFromPlainText('Before move')) };
-    const second = { ...created.document, doc: documentContentSchema.parse(tiptapDocFromPlainText('After move')) };
+    const first = { ...created.document, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('Before move')) };
+    const second = { ...created.document, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('After move')) };
     await Promise.all([repo.saveDocument(first), repo.renameEntry('A', 'B'), repo.saveDocument(second)]);
     expect((await repo.readDocument('B/Untitled.yantraD')).doc).toEqual(second.doc);
     await expect(fs.stat(path.join(root, 'A'))).rejects.toThrow();

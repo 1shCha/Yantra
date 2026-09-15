@@ -4,6 +4,7 @@ import type { VaultOperations } from '../../shared/vault-api';
 import { newDocument, type DocumentFile, type VaultSnapshot } from '../../shared/vault-format';
 import { tiptapDocFromPlainText } from '../../shared/tiptap-document';
 import { createVaultWorkspace } from './vaultWorkspace';
+import { createVaultCanvasSession } from '../vault/vault-canvas-session';
 import { newCanvas } from '../../shared/vault-canvas';
 
 function deferred<T>() {
@@ -28,6 +29,7 @@ function setup() {
   let choices = 0;
   const api: VaultOperations = {
     refresh: async () => vault, retryRecovery: async () => vault,
+    deleteCanvasNodes: async () => { throw new Error('Not used by this test'); },
     deleteEntry: async () => { throw new Error('Not used by this test'); },
     createFolder: async (_session, folder, name) => ({ path: folder ? `${folder}/${name}` : name }),
     renameEntry: async () => { throw new Error('Not used by this test'); },
@@ -167,12 +169,46 @@ describe('vault workspace registry', () => {
     const { store, api } = setup();
     expect(await store.getState().createDocument()).toMatchObject({ status: 'failure', error: { code: 'no-vault' } });
     await store.getState().restore();
+    const picker = deferred<VaultSnapshot | null>();
+    api.choose = () => picker.promise;
+    const pending = store.getState().choose(false);
+    expect(await store.getState().createCanvas()).toMatchObject({ status: 'failure', error: { code: 'busy' } });
+    picker.resolve(null);
+    expect((await pending).status).toBe('cancelled');
+  });
+
+  it('keeps a later navigation selected when a document finishes creating', async () => {
+    const { store, api, a, reads } = setup();
+    await store.getState().restore();
     const create = deferred<{ path: string; document: DocumentFile }>();
     api.createDocument = () => create.promise;
     const pending = store.getState().createDocument();
-    expect(await store.getState().createCanvas()).toMatchObject({ status: 'failure', error: { code: 'busy' } });
-    create.resolve({ path: 'New.yantraD', document: newDocument('New') });
-    expect((await pending).status).toBe('success');
+    const opening = store.getState().openDocument('A.yantraD');
+    reads.get('A.yantraD')!.resolve(a);
+    await opening;
+    const document = newDocument('New');
+    create.resolve({ path: 'New.yantraD', document });
+    expect(await pending).toEqual({ status: 'cancelled', reason: 'superseded' });
+    expect(store.getState().activeDocumentId).toBe(a.id);
+    expect(store.getState().documents.has(document.id)).toBe(true);
+    expect(store.getState().vault!.entries.some((entry) => entry.documentId === document.id)).toBe(true);
+  });
+
+  it('queues rapid creations and opens only the latest requested document', async () => {
+    const { store, api } = setup();
+    await store.getState().restore();
+    let index = 0;
+    api.createDocument = async () => {
+      const document = newDocument(`New_${++index}`);
+      return { path: `${document.title}.yantraD`, document };
+    };
+    const first = store.getState().createDocument();
+    const second = store.getState().createDocument();
+    expect(store.getState().busy).toBe(false);
+    expect((await first).status).toBe('cancelled');
+    expect((await second).status).toBe('success');
+    expect(store.getState().vault!.entries).toHaveLength(4);
+    expect(store.getState().activePath).toBe('New_2.yantraD');
   });
 
   it('returns command success independently of a separate displayed error', async () => {
@@ -193,5 +229,36 @@ describe('vault workspace registry', () => {
     expect(await store.getState().createDocument('MissingFolder')).toMatchObject({ status: 'failure', error: { code: 'invalid-input' } });
     expect(await store.getState().createFolder('', 'Invalid name')).toMatchObject({ status: 'failure', error: { code: 'invalid-input' } });
     expect(store.getState().documents.size).toBe(0);
+  });
+});
+
+
+describe('canvas node render identity', () => {
+  it('preserves existing flow nodes when adding a node and replaces changed geometry', async () => {
+    const { store } = setup();
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    await store.getState().createCanvasNode(canvasId, { x: 200, y: 200 });
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    try {
+      const first = session.flow.getState().nodes[0]!;
+      await store.getState().createCanvasNode(canvasId, { x: 600, y: 200 });
+      expect(session.flow.getState().nodes).toHaveLength(2);
+      expect(session.flow.getState().nodes[0]).toBe(first);
+      const second = session.flow.getState().nodes[1]!;
+      const file = store.getState().canvases.get(canvasId)!.file;
+      store.getState().updateCanvas(canvasId, {
+        edges: file.edges, groups: file.groups, layerOrder: file.layerOrder, viewport: file.viewport,
+        nodes: file.nodes.map((node) => node.id === first.id ? { ...node, x: node.x + 50 } : node),
+      });
+      expect(session.flow.getState().nodes[0]).not.toBe(first);
+      expect(session.flow.getState().nodes[0]!.position.x).toBe(first.position.x + 50);
+      expect(session.flow.getState().nodes[1]).toBe(second);
+      await store.getState().flush();
+    } finally {
+      disconnect();
+    }
   });
 });

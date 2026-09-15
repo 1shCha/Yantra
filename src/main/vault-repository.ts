@@ -1,3 +1,5 @@
+import { tiptapDocSchema } from '../shared/tiptap-document';
+import type { CanvasDeletionResult } from '../shared/vault-api';
 import { scanVault } from './vault-scan';
 import { VaultFileAccess } from './vault-file-access';
 import { FILE_EXTENSIONS, vaultFileExtension } from '../shared/vault-paths';
@@ -11,8 +13,8 @@ import { migrateVaultNames } from './vault-name-migration';
 import { canvasFileSchema, decodeCanvas, newCanvas, removeCanvasNodes, type CanvasFile } from '../shared/vault-canvas';
 import { VaultDeletion, folderDeletionFingerprint, type DeletionRecord } from './vault-deletion';
 import { OperationError, operationFailure } from '../shared/operation-result';
-import { relocatedPath, vaultNameSchema, type VaultEntryChange } from '../shared/vault-organization';
-import { decodeDocument, documentContentSchema, documentFileSchema, newDocument, vaultMetadataSchema,
+import { orderEntries, reorderedPaths, type EntryPlacement, relocatedPath, vaultNameSchema, type VaultEntryChange } from '../shared/vault-organization';
+import { decodeDocument, documentFileSchema, newDocument, vaultMetadataSchema,
   type DocumentFile, type VaultEntry, type VaultMetadata, type VaultSnapshot } from '../shared/vault-format';
 
 function isCode(error: Error, code: string): boolean {
@@ -63,7 +65,7 @@ export class VaultRepository {
     return result;
   }
 
-  private constructor(readonly root: string, readonly metadata: VaultMetadata, trash: (absolute: string) => Promise<void>) {
+  private constructor(readonly root: string, public metadata: VaultMetadata, trash: (absolute: string) => Promise<void>) {
     this.files = new VaultFileAccess(root);
     this.deletion = new VaultDeletion(root, (relative) => this.resolve(relative), trash);
   }
@@ -115,7 +117,7 @@ export class VaultRepository {
     this.canvasPaths = canvasPaths;
     this.canvases = canvases;
     this.baselines = baselines;
-    return { sessionId: this.sessionId, root: this.root, name: path.basename(this.root), metadata: this.metadata, entries, appearances, recovery: this.deletion.issue };
+    return { sessionId: this.sessionId, root: this.root, name: path.basename(this.root), metadata: this.metadata, entries: orderEntries(entries, this.metadata.sidebarOrder), appearances, recovery: this.deletion.issue };
   }
 
   async readDocument(relative: string, mode: 'inspect' | 'accept-disk' = 'inspect'): Promise<DocumentFile> {
@@ -273,14 +275,49 @@ export class VaultRepository {
     });
   }
 
-  moveEntry(relative: string, folder: string): Promise<VaultEntryChange> {
+  moveEntry(relative: string, folder: string, placement?: EntryPlacement): Promise<VaultEntryChange> {
     return this.mutate(async () => {
+      if (placement) {
+        this.assertWritable();
+        if (relative.split('/').slice(0, -1).join('/') !== folder || placement.anchor.split('/').slice(0, -1).join('/') !== folder) {
+          throw new OperationError({ code: 'invalid-input', message: 'Reorder items within the same folder.' });
+        }
+        // Ordering needs sibling names and kinds, not document contents or a full scan.
+        const directory = await this.resolve(folder);
+        const names = await fs.readdir(directory, { withFileTypes: true });
+        const items: VaultEntry[] = names.filter((item) => item.name !== '.yantra' && !item.isSymbolicLink()
+          && (item.isDirectory() || (item.isFile() && /\.yantra[DC]$/.test(item.name))))
+          .map((item): VaultEntry => ({ name: item.name, path: folder ? `${folder}/${item.name}` : item.name,
+            kind: item.isDirectory() ? 'folder' : item.name.endsWith('.yantraD') ? 'document' : 'canvas' }))
+          .sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name));
+        const source = items.find((item) => item.path === relative);
+        const anchor = items.find((item) => item.path === placement.anchor);
+        if (!source || !anchor) throw new OperationError({ code: 'invalid-input', message: 'Choose an existing file or folder.' });
+        if ((source.kind === 'folder') !== (anchor.kind === 'folder')) {
+          throw new OperationError({ code: 'invalid-input', message: 'Folders stay above files. Reorder within the same group.' });
+        }
+        const saved = this.metadata.sidebarOrder ?? [];
+        const order = reorderedPaths(items, saved, relative, placement);
+        if (order.length === saved.length && order.every((item, index) => item === saved[index])) return { from: relative, to: relative, sidebarOrder: saved };
+        await this.saveSidebarOrder(order);
+        return { from: relative, to: relative, sidebarOrder: order };
+      }
       await this.entryPath(relative);
       const parent = await this.resolve(folder);
       if (!(await fs.stat(parent)).isDirectory()) throw new OperationError({ code: 'invalid-input', message: 'Destination is not a folder.' });
       const name = relative.split('/').at(-1)!;
       return this.relocate(relative, folder ? `${folder}/${name}` : name);
     });
+  }
+
+  private async saveSidebarOrder(sidebarOrder: string[]): Promise<void> {
+    const metadataPath = path.join(this.root, '.yantra', 'vault.json');
+    if ((await fs.lstat(path.dirname(metadataPath))).isSymbolicLink() || (await fs.lstat(metadataPath)).isSymbolicLink()) {
+      throw new OperationError({ code: 'invalid-input', message: 'Vault metadata cannot be a symbolic link.' });
+    }
+    const metadata = { ...this.metadata, sidebarOrder };
+    await atomicWrite(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+    this.metadata = metadata;
   }
 
   private entryPath(relative: string): Promise<string> {
@@ -298,7 +335,7 @@ export class VaultRepository {
       if (documentTitle === undefined) return { from, to };
       await this.unchanged(from);
       const file = await this.readDocument(from);
-      const doc = documentContentSchema.parse(withDocumentTitle(file.doc, documentTitle));
+      const doc = tiptapDocSchema.parse(withDocumentTitle(file.doc, documentTitle));
       if (doc === file.doc || JSON.stringify(doc) === JSON.stringify(file.doc)) return { from, to, document: file };
       const updated = { ...file, doc, updatedAt: new Date().toISOString() };
       await this.unchanged(from);
@@ -327,7 +364,7 @@ export class VaultRepository {
       const file = extension === FILE_EXTENSIONS.document ? await this.readDocument(from) : await this.readCanvas(from);
       if (title) {
         const renamed = extension === FILE_EXTENSIONS.document && documentTitle !== undefined
-          ? { ...file, title, doc: documentContentSchema.parse(withDocumentTitle(documentFileSchema.parse(file).doc, documentTitle)), updatedAt: new Date().toISOString() }
+          ? { ...file, title, doc: tiptapDocSchema.parse(withDocumentTitle(documentFileSchema.parse(file).doc, documentTitle)), updatedAt: new Date().toISOString() }
           : { ...file, title, updatedAt: new Date().toISOString() };
         await atomicCreate(destination, `${JSON.stringify(renamed, null, 2)}\n`);
         if (extension === FILE_EXTENSIONS.document) result.document = documentFileSchema.parse(renamed);
@@ -358,7 +395,77 @@ export class VaultRepository {
         this.canvases.set(next, result.canvas?.id === canvas.id ? result.canvas : canvas);
       }
     }
+    if (this.metadata.sidebarOrder) {
+      const order = this.metadata.sidebarOrder.map((item) => relocatedPath(item, from, to));
+      // The filesystem move has committed. Always return its new path even if
+      // saving the presentation preference fails, so the workspace stays in sync.
+      try { await this.saveSidebarOrder(order); }
+      catch (error) {
+        this.metadata = { ...this.metadata, sidebarOrder: order };
+        result.warning = `The item was moved or renamed, but its sidebar order could not be saved: ${operationFailure(error).message}`;
+      }
+      result.sidebarOrder = order;
+    }
     return result;
+  }
+
+  deleteCanvasNodes(canvasId: string, nodeIds: string[]): Promise<CanvasDeletionResult> {
+    return this.mutate(async () => {
+      this.assertWritable();
+      const before = await this.scanFiles();
+      const canvasPath = this.canvasPaths.get(canvasId);
+      const canvas = canvasPath && this.canvases.get(canvasPath);
+      if (!canvas) throw new OperationError({ code: 'unavailable', message: 'Canvas is unavailable.' });
+      const ids = new Set(nodeIds);
+      const nodes = canvas.nodes.filter((node) => ids.has(node.id));
+      const flatten = (entries: VaultEntry[]): VaultEntry[] => entries.flatMap((entry) => [entry, ...flatten(entry.children ?? [])]);
+      const entries = flatten(before.entries);
+      if (entries.some((entry) => entry.kind === 'canvas' && entry.error)) {
+        throw new OperationError({ code: 'unavailable', message: 'Resolve unavailable canvases before deleting documents.' });
+      }
+      const paths = nodes.map((node) => {
+        const relative = this.documentPaths.get(node.documentId);
+        if (!relative || entries.find((entry) => entry.path === relative)?.error) {
+          throw new OperationError({ code: 'unavailable', message: 'A selected document is unavailable.' });
+        }
+        return { relative, documentId: node.documentId };
+      });
+      const changedPaths = new Set<string>();
+      let error: CanvasDeletionResult['error'];
+      for (const { relative, documentId } of paths) {
+        try {
+          const record: DeletionRecord = { version: 1, path: relative, kind: 'document', original: await this.unchanged(relative), canvases: [] };
+          for (const [relativeCanvas, file] of this.canvases) {
+            const removed = new Set(file.nodes.filter((node) => node.documentId === documentId).map((node) => node.id));
+            if (!removed.size) continue;
+            record.canvases.push({ path: relativeCanvas, before: await this.unchanged(relativeCanvas),
+              after: `${JSON.stringify(removeCanvasNodes(file, removed), null, 2)}\n` });
+          }
+          await this.deletion.begin(record);
+          for (const change of record.canvases) {
+            const raw = await this.files.read(change.path);
+            // Recovery may have stopped before writing every affected canvas.
+            if (raw === change.after) {
+              this.baselines.set(change.path, raw);
+              this.canvases.set(change.path, decodeCanvas(raw));
+              changedPaths.add(change.path);
+            }
+          }
+          if (this.deletion.issue) {
+            error = { code: 'recovery-required', ...this.deletion.issue };
+            break;
+          }
+          this.baselines.delete(relative);
+          this.documentPaths.delete(documentId);
+        } catch (cause) { error = operationFailure(cause); break; }
+      }
+      // Preserve unrelated baselines: concurrent external edits must still conflict.
+      const snapshot = await this.scanFiles();
+      return { snapshot, canvases: [...changedPaths].flatMap((relative) => {
+        const file = this.canvases.get(relative);
+        return file ? [file] : [];
+      }), error };
+    });
   }
 
   deleteEntry(relative: string): Promise<VaultSnapshot> {

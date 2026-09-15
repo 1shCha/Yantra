@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import type { EntryPlacement } from '../shared/vault-organization';
 import { VAULT_CHANNELS } from '../shared/vault-api';
 import { documentFileSchema, type VaultSnapshot } from '../shared/vault-format';
 import { captureOperation, cancelled, OperationError, success, type OperationResult } from '../shared/operation-result';
@@ -101,9 +102,11 @@ export function registerVaultIpcHandlers(): void {
     active(z.string().parse(sessionId)).createFolder(z.string().parse(folder), z.string().parse(name)));
   handle(VAULT_CHANNELS.RENAME_ENTRY, (_event, sessionId: string, relative: string, name: string, documentTitle?: string) =>
     active(z.string().parse(sessionId)).renameEntry(z.string().parse(relative), z.string().parse(name), z.string().optional().parse(documentTitle)));
-  handle(VAULT_CHANNELS.MOVE_ENTRY, (_event, sessionId: string, relative: string, folder: string) =>
-    active(z.string().parse(sessionId)).moveEntry(z.string().parse(relative), z.string().parse(folder)));
+  handle(VAULT_CHANNELS.MOVE_ENTRY, (_event, sessionId: string, relative: string, folder: string, placement?: EntryPlacement) =>
+    active(z.string().parse(sessionId)).moveEntry(z.string().parse(relative), z.string().parse(folder), z.object({ anchor: z.string(), side: z.enum(['before', 'after']) }).strict().optional().parse(placement)));
   handle(VAULT_CHANNELS.REFRESH, (_event, sessionId: string) => active(z.string().parse(sessionId)).refresh(), snapshotResult);
+  handle(VAULT_CHANNELS.DELETE_CANVAS_NODES, (_event, sessionId: string, canvasId: string, nodeIds: string[]) =>
+    active(z.string().parse(sessionId)).deleteCanvasNodes(z.uuid().parse(canvasId), z.array(z.uuid()).parse(nodeIds)));
   handle(VAULT_CHANNELS.DELETE_ENTRY, (_event, sessionId: string, relative: string) =>
     active(z.string().parse(sessionId)).deleteEntry(z.string().parse(relative)), snapshotResult);
   handle(VAULT_CHANNELS.RETRY_RECOVERY, (_event, sessionId: string) => active(z.string().parse(sessionId)).retryRecovery(), snapshotResult);

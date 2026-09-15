@@ -2,14 +2,13 @@ import { testVaultApi } from "../test/vault-api";
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultRepository } from './vault-repository';
 import type { VaultOperations } from '../shared/vault-api';
 import { type CanvasFile, type CanvasPresentation } from '../shared/vault-canvas';
 import { tiptapDocFromPlainText } from '../shared/tiptap-document';
 import { createVaultWorkspace } from '../renderer/stores/vaultWorkspace';
 import { createVaultCanvasSession } from '../renderer/vault/vault-canvas-session';
-import { useCanvasStore } from '../renderer/stores/canvasStore';
 
 function presentation(file: CanvasFile): CanvasPresentation {
   const { nodes, edges, groups, layerOrder, viewport } = file;
@@ -25,6 +24,7 @@ describe('vault canvas registry', () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'yantra-canvas-registry-'));
     repo = await VaultRepository.open(root, true);
     api = {
+      deleteCanvasNodes: (_session, canvasId, nodeIds) => repo.deleteCanvasNodes(canvasId, nodeIds),
       refresh: () => repo.refresh(), deleteEntry: (_session, relative) => repo.deleteEntry(relative), retryRecovery: () => repo.retryRecovery(),
       createFolder: (_session, folder, name) => repo.createFolder(folder, name),
       renameEntry: (_session, relative, name, title) => repo.renameEntry(relative, name, title),
@@ -72,6 +72,61 @@ describe('vault canvas registry', () => {
     expect(loaded.file.nodes[0]).toMatchObject({ x: 340, y: 290, width: 320, height: 220 });
     expect(loaded.save.state).toBe('clean');
     expect(store.getState().vault?.entries.find((entry) => entry.path === 'Unfiled')?.children).toHaveLength(1);
+  });
+
+  it('keeps editing live during queued creations and commits the latest canvas without losing changes', async () => {
+    const id = await createNode();
+    const session = createVaultCanvasSession(store, id);
+    const disconnect = session.connect();
+    const first = store.getState().canvases.get(id)!.file.nodes[0]!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = api.createNodeDocument;
+    let calls = 0;
+    api.createNodeDocument = async (...args) => { if (++calls === 1) await gate; return original(...args); };
+    const adding = store.getState().createCanvasNode(id, { x: 700, y: 500 });
+    const queued = store.getState().createCanvasNode(id, { x: 1100, y: 500 });
+    await Promise.resolve();
+    expect(store.getState().busy).toBe(false);
+    session.flow.getState().setNodePosition(first.id, { x: 80, y: 100 });
+    store.getState().updateDocument(first.documentId, tiptapDocFromPlainText('Edited while creating'));
+    let closed = false;
+    const closing = store.getState().flush().then(() => { closed = true; });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release();
+    expect((await adding).status).toBe('success');
+    expect((await queued).status).toBe('success');
+    await closing;
+    expect(calls).toBe(2);
+    const canvas = await repo.readCanvas('Untitled.yantraC');
+    expect(canvas.nodes).toHaveLength(3);
+    expect(canvas.nodes[0]).toMatchObject({ id: first.id, x: 80, y: 100 });
+    expect((await repo.readDocument('Unfiled/Untitled.yantraD')).doc).toEqual(tiptapDocFromPlainText('Edited while creating'));
+    disconnect();
+  });
+
+  it('publishes a complete addition and changes selection without replacing unrelated nodes or edges', async () => {
+    const id = await createNode();
+    await store.getState().createCanvasNode(id, { x: 800, y: 400 });
+    const session = createVaultCanvasSession(store, id);
+    const disconnect = session.connect();
+    const first = session.flow.getState().nodes[0]!;
+    session.flow.getState().selectNode(session.flow.getState().nodes[1]!.id);
+    const before = session.flow.getState();
+    const stop = store.subscribe((state) => {
+      for (const node of state.canvases.get(id)!.file.nodes) {
+        expect(state.documents.has(node.documentId)).toBe(true);
+        expect(state.vault!.entries.find((entry) => entry.path === 'Unfiled')!.children!.some((entry) => entry.documentId === node.documentId)).toBe(true);
+      }
+    });
+    expect((await store.getState().createCanvasNode(id, { x: 1200, y: 400 })).status).toBe('success');
+    const after = session.flow.getState();
+    expect(after.nodes[0]).toBe(first);
+    expect(after.edges).toBe(before.edges);
+    expect(after.nodes[1]?.selected).toBe(false);
+    expect(after.selectedNodeIds).toEqual([after.nodes[2]!.id]);
+    stop(); disconnect();
   });
 
   it('uses the same working document in node and standalone presentations, including unsaved edits', async () => {
@@ -175,9 +230,42 @@ describe('vault canvas registry', () => {
     expect(store.getState().canvases.get(second)?.file.nodes).toEqual([]);
   });
 
-  it('keeps canvas interaction state content-free and isolated from the legacy canvas', async () => {
+  it('publishes only persisted canvas changes and keeps unchanged arrays stable', async () => {
     const id = await createNode();
-    const legacyNodes = useCanvasStore.getState().nodes;
+    const session = createVaultCanvasSession(store, id);
+    const disconnect = session.connect();
+    const update = vi.spyOn(store.getState(), 'updateCanvas');
+    try {
+      const node = session.flow.getState().nodes[0]!;
+      const original = store.getState().canvases.get(id)!.file;
+      session.flow.getState().selectNode(node.id);
+      session.flow.getState().editNode(node.id);
+      session.flow.getState().clearSelection();
+      session.setViewport({ ...original.viewport });
+      expect(update).not.toHaveBeenCalled();
+      expect(store.getState().canvases.get(id)!.file).toBe(original);
+
+      session.setViewport({ x: 25, y: 30, zoom: 0.8 });
+      expect(update).toHaveBeenCalledTimes(1);
+      const panned = store.getState().canvases.get(id)!.file;
+      expect(panned.nodes).toBe(original.nodes);
+      expect(panned.edges).toBe(original.edges);
+      expect(panned.groups).toBe(original.groups);
+      expect(panned.layerOrder).toBe(original.layerOrder);
+
+      session.flow.getState().setNodeGeometry(node.id, { x: 100, y: 120, width: 450, height: 350 });
+      expect(update).toHaveBeenCalledTimes(2);
+      const resized = store.getState().canvases.get(id)!.file;
+      expect(resized.nodes[0]).toMatchObject({ x: 100, y: 120, width: 450, height: 350 });
+      expect(resized.viewport).toBe(panned.viewport);
+      expect(resized.edges).toBe(original.edges);
+      await store.getState().flush();
+      expect((await repo.readCanvas(store.getState().canvases.get(id)!.path)).nodes).toEqual(resized.nodes);
+    } finally { update.mockRestore(); disconnect(); }
+  });
+
+  it('keeps canvas interaction state content-free', async () => {
+    const id = await createNode();
     const session = createVaultCanvasSession(store, id);
     const disconnect = session.connect();
     try {
@@ -193,11 +281,7 @@ describe('vault canvas registry', () => {
       await store.getState().flush();
       expect(store.getState().canvases.get(id)?.file.nodes[0]).toMatchObject({ x: 300, y: 400, width: 580, height: 360 });
       expect(store.getState().canvases.get(id)?.file.viewport).toEqual({ x: 40, y: 60, zoom: 0.8 });
-      session.flow.getState().deleteSelectedNodes();
-      session.flow.getState().onNodesChange([{ type: 'remove', id: node.id }]);
-      expect(session.flow.getState().nodes).toHaveLength(1);
-      expect(() => session.flow.getState().getJsonCanvasDocument()).toThrow('vault canvas persistence');
-      expect(useCanvasStore.getState().nodes).toBe(legacyNodes);
+
     } finally { disconnect(); }
   });
 

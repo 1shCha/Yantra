@@ -1,28 +1,10 @@
 import { z } from 'zod';
 import { OperationError, type OperationFailure } from './operation-result';
-import { createEmptyTiptapDoc, tiptapNodeAttrsSchema } from './tiptap-document';
+import { createEmptyTiptapDoc, tiptapDocSchema } from './tiptap-document';
 import { vaultNameSchema, type CanvasAppearance } from './vault-organization';
 
-const documentAttrsSchema = tiptapNodeAttrsSchema.strict();
-const documentMarkSchema = z.object({
-  type: z.enum(['bold', 'italic', 'highlight', 'link']),
-  attrs: documentAttrsSchema.optional(),
-}).strict();
-const documentNodeSchema = z.strictObject({
-  type: z.enum(['paragraph', 'heading', 'text', 'hardBreak', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'codeBlock']),
-  text: z.string().optional(),
-  attrs: documentAttrsSchema.optional(),
-  marks: z.array(documentMarkSchema).optional(),
-  get content() { return z.array(documentNodeSchema).optional(); },
-});
-
-// Reject unknown content rather than silently stripping it during an edit/save.
-export const documentContentSchema = z.object({
-  type: z.literal('doc'),
-  content: z.array(documentNodeSchema).optional(),
-}).strict();
-
 export const vaultMetadataSchema = z.object({
+  sidebarOrder: z.array(z.string()).optional(),
   formatVersion: z.literal(1),
   id: z.uuid(),
   createdAt: z.iso.datetime(),
@@ -32,7 +14,7 @@ export const documentFileSchema = z.object({
   formatVersion: z.literal(1),
   id: z.uuid(),
   title: vaultNameSchema,
-  doc: documentContentSchema,
+  doc: tiptapDocSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 }).strict();
@@ -49,7 +31,7 @@ export function decodeDocument(raw: string): DocumentFile {
 
 export function newDocument(title: string): DocumentFile {
   const now = new Date().toISOString();
-  return { formatVersion: 1, id: crypto.randomUUID(), title: vaultNameSchema.parse(title), doc: documentContentSchema.parse(createEmptyTiptapDoc()), createdAt: now, updatedAt: now };
+  return { formatVersion: 1, id: crypto.randomUUID(), title: vaultNameSchema.parse(title), doc: tiptapDocSchema.parse(createEmptyTiptapDoc()), createdAt: now, updatedAt: now };
 }
 
 export interface VaultEntry {

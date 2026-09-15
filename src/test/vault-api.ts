@@ -12,6 +12,7 @@ export function testVaultApi(api: VaultOperations): YantraVaultApi {
     restore: () => captureOperation(() => api.restore(), snapshotResult),
     choose: (create) => captureOperation(() => api.choose(create), (value) => value === null ? cancelled('user') : snapshotResult(value)),
     refresh: (session) => captureOperation(() => api.refresh(session), snapshotResult),
+    deleteCanvasNodes: (session, canvasId, nodeIds) => captureOperation(() => api.deleteCanvasNodes(session, canvasId, nodeIds)),
     deleteEntry: (session, path) => captureOperation(() => api.deleteEntry(session, path), snapshotResult),
     retryRecovery: (session) => captureOperation(() => api.retryRecovery(session), snapshotResult),
     readDocument: (session, path, mode) => captureOperation(() => api.readDocument(session, path, mode)),
@@ -23,6 +24,6 @@ export function testVaultApi(api: VaultOperations): YantraVaultApi {
     createNodeDocument: (session) => captureOperation(() => api.createNodeDocument(session)),
     createFolder: (session, folder, name) => captureOperation(() => api.createFolder(session, folder, name)),
     renameEntry: (session, path, name, title) => captureOperation(() => api.renameEntry(session, path, name, title)),
-    moveEntry: (session, path, folder) => captureOperation(() => api.moveEntry(session, path, folder)),
+    moveEntry: (session, path, folder, placement) => captureOperation(() => api.moveEntry(session, path, folder, placement)),
   };
 }

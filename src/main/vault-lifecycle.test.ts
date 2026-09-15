@@ -1,12 +1,14 @@
+import { tiptapDocSchema } from '../shared/tiptap-document';
 import { testVaultApi } from "../test/vault-api";
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultRepository } from './vault-repository';
+import { createVaultCanvasSession } from '../renderer/vault/vault-canvas-session';
 import { createVaultWorkspace } from '../renderer/stores/vaultWorkspace';
 import { newCanvas, removeCanvasNodes } from '../shared/vault-canvas';
-import { newDocument, documentContentSchema } from '../shared/vault-format';
+import { newDocument } from '../shared/vault-format';
 import { tiptapDocFromPlainText } from '../shared/tiptap-document';
 import type { VaultOperations } from '../shared/vault-api';
 
@@ -17,9 +19,10 @@ describe('vault lifecycle', () => {
   let store: ReturnType<typeof createVaultWorkspace>;
   let api: VaultOperations;
   let failTrash: boolean;
+  let failTrashAfter: number;
   const trashed: string[] = [];
   const trash = async (absolute: string) => {
-    if (failTrash) throw new Error('Trash unavailable');
+    if (failTrash || trashed.length >= failTrashAfter) throw new Error('Trash unavailable');
     const destination = path.join(temporary, `trashed-${trashed.length}`);
     await fs.rename(absolute, destination);
     trashed.push(destination);
@@ -29,9 +32,11 @@ describe('vault lifecycle', () => {
     root = path.join(temporary, 'vault');
     await fs.mkdir(root);
     failTrash = false;
+    failTrashAfter = Infinity;
     trashed.length = 0;
     repo = await VaultRepository.open(root, true, trash);
     api = {
+      deleteCanvasNodes: (_session, canvasId, nodeIds) => repo.deleteCanvasNodes(canvasId, nodeIds),
       restore: () => repo.scan(), choose: async () => null, refresh: () => repo.refresh(),
       retryRecovery: () => repo.retryRecovery(), deleteEntry: (_session, relative) => repo.deleteEntry(relative),
       readDocument: (_session, relative, mode) => repo.readDocument(relative, mode), createDocument: (_session, folder) => repo.createDocument(folder),
@@ -90,6 +95,138 @@ describe('vault lifecycle', () => {
     await store.getState().flush();
     await expect(fs.stat(path.join(root, document.path))).rejects.toThrow();
     await expect(repo.saveDocument(document.file)).rejects.toThrow('not registered');
+  });
+
+  it.each(['selection', 'group', 'flow'] as const)('trashes canvas documents through %s deletion and saves pending edits', async (mode) => {
+    const { canvasId, node, document, canvas } = await canvasAndDocument();
+    await store.getState().createCanvasNode(canvasId, { x: 600, y: 200 });
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    let pending: ReturnType<ReturnType<typeof store.getState>['deleteCanvasNodes']>;
+    const deleteNodes = store.getState().deleteCanvasNodes;
+    store.setState({ deleteCanvasNodes: (...args) => (pending = deleteNodes(...args)) });
+    try {
+      store.getState().updateDocument(node.documentId, tiptapDocFromPlainText('Final canvas draft'));
+      const ids = session.flow.getState().nodes.map((item) => item.id);
+      session.flow.getState().selectNode(ids[0]!);
+      session.flow.getState().toggleNodeSelection(ids[1]!);
+      session.flow.getState().groupSelectedNodes();
+      session.flow.setState({ edges: [{ id: 'connection', source: ids[0]!, target: ids[1]! }] });
+      if (mode === 'group') session.flow.getState().deleteSelectedGroup();
+      else if (mode === 'flow') session.flow.getState().onNodesChange([{ type: 'remove', id: node.id }]);
+      else {
+        session.flow.getState().selectNode(ids[0]!);
+        session.flow.getState().toggleNodeSelection(ids[1]!);
+        session.flow.getState().deleteSelectedNodes();
+      }
+      expect((await pending!).status).toBe('success');
+      await store.getState().flush();
+      const saved = await repo.readCanvas(canvas.path);
+      expect(saved.nodes).toHaveLength(mode === 'flow' ? 1 : 0);
+      expect(saved.groups).toEqual([]);
+      expect(saved.edges).toEqual([]);
+      expect(trashed).toHaveLength(mode === 'flow' ? 1 : 2);
+      expect(await fs.readFile(trashed[0]!, 'utf8')).toContain('Final canvas draft');
+      await expect(fs.stat(path.join(root, document.path))).rejects.toThrow();
+      expect(session.flow.getState().selectedNodeIds).toEqual([]);
+    } finally { disconnect(); }
+  });
+
+  it('surfaces Trash recovery errors when deleting canvas nodes', async () => {
+    const { canvasId, node, document, canvas } = await canvasAndDocument();
+    failTrash = true;
+    const result = await store.getState().deleteCanvasNodes(canvasId, [node.id]);
+    expect(result.status).toBe('recovery-required');
+    expect(store.getState().error).toContain('Trash unavailable');
+    expect(trashed).toEqual([]);
+    expect(await fs.readFile(path.join(root, document.path), 'utf8')).toContain(node.documentId);
+    expect(store.getState().canvases.get(canvasId)!.file.nodes).toEqual((await repo.readCanvas(canvas.path)).nodes);
+  });
+
+  it('reports a canvas deletion failure and does not trash subsequent documents', async () => {
+    const { canvasId, canvas } = await canvasAndDocument();
+    await store.getState().createCanvasNode(canvasId, { x: 600, y: 200 });
+    await store.getState().createCanvasNode(canvasId, { x: 900, y: 200 });
+    const nodes = store.getState().canvases.get(canvasId)!.file.nodes;
+    failTrashAfter = 1;
+    const result = await store.getState().deleteCanvasNodes(canvasId, nodes.map((node) => node.id));
+    expect(result.status).toBe('recovery-required');
+    expect(store.getState().error).toBe('Trash unavailable');
+    expect(trashed).toHaveLength(1);
+    expect(store.getState().canvases.get(canvasId)!.file.nodes).toEqual((await repo.readCanvas(canvas.path)).nodes);
+    expect(store.getState().canvases.get(canvasId)!.file.nodes).toHaveLength(1);
+  });
+
+  it('retains the active canvas, surviving node identities and editable save resources', async () => {
+    const { canvasId, node, canvas } = await canvasAndDocument();
+    await store.getState().createCanvasNode(canvasId, { x: 600, y: 200 });
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    const survivor = session.flow.getState().nodes[1]!;
+    const document = store.getState().documents.get(survivor.data.documentId!)!;
+    const entry = store.getState().vault!.entries.find((item) => item.path === canvas.path);
+    const activeChanges: (string | null)[] = [];
+    const stop = store.subscribe((state, before) => {
+      if (state.activeCanvasId !== before.activeCanvasId) activeChanges.push(state.activeCanvasId);
+    });
+    try {
+      expect((await store.getState().deleteCanvasNodes(canvasId, [node.id])).status).toBe('success');
+      expect(activeChanges).toEqual([]);
+      expect(session.flow.getState().nodes[0]).toBe(survivor);
+      expect(store.getState().documents.get(document.file.id)).toBe(document);
+      expect(store.getState().vault!.entries.find((item) => item.path === canvas.path)).toBe(entry);
+      session.flow.getState().setNodePosition(survivor.id, { x: 800, y: 300 });
+      store.getState().updateDocument(document.file.id, tiptapDocFromPlainText('Surviving draft'));
+      await store.getState().flush();
+      expect((await repo.readCanvas(canvas.path)).nodes[0]).toMatchObject({ x: 800, y: 300 });
+      expect((await repo.readDocument(document.path)).doc).toEqual(tiptapDocFromPlainText('Surviving draft'));
+    } finally { stop(); disconnect(); }
+  });
+
+  it('allows unrelated editing and navigation while deletion waits, and close waits for deletion', async () => {
+    const { canvasId, node } = await canvasAndDocument();
+    await store.getState().createDocument();
+    const other = store.getState().documents.get(store.getState().activeDocumentId!)!;
+    await store.getState().openCanvas(store.getState().canvases.get(canvasId)!.path);
+    const original = api.deleteCanvasNodes;
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    api.deleteCanvasNodes = async (...args) => { started(); await gate; return original(...args); };
+    const deletion = store.getState().deleteCanvasNodes(canvasId, [node.id]);
+    await ready;
+    expect(store.getState().busy).toBe(false);
+    expect(store.getState().deletingCanvasId).toBe(canvasId);
+    await store.getState().openDocument(other.path);
+    store.getState().updateDocument(other.file.id, tiptapDocFromPlainText('Concurrent draft'));
+    let closed = false;
+    const closing = store.getState().flush().then(() => { closed = true; });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release();
+    expect((await deletion).status).toBe('success');
+    await closing;
+    expect(store.getState().activeDocumentId).toBe(other.file.id);
+    expect((await repo.readDocument(other.path)).doc).toEqual(tiptapDocFromPlainText('Concurrent draft'));
+    expect(store.getState().deletingCanvasId).toBeNull();
+  });
+
+  it('scans unrelated documents twice for an entire batch and preserves external-edit conflicts', async () => {
+    const { canvasId } = await canvasAndDocument();
+    await store.getState().createCanvasNode(canvasId, { x: 600, y: 200 });
+    await store.getState().createDocument();
+    const other = store.getState().documents.get(store.getState().activeDocumentId!)!;
+    const external = { ...other.file, doc: tiptapDocFromPlainText('External edit') };
+    await fs.writeFile(path.join(root, other.path), JSON.stringify(external));
+    const spy = vi.spyOn(fs, 'readFile');
+    try {
+      const ids = store.getState().canvases.get(canvasId)!.file.nodes.map((node) => node.id);
+      expect((await store.getState().deleteCanvasNodes(canvasId, ids)).status).toBe('success');
+      expect(spy.mock.calls.filter(([file]) => String(file) === path.join(repo.root, other.path))).toHaveLength(2);
+    } finally { spy.mockRestore(); }
+    await expect(repo.saveDocument(other.file)).rejects.toThrow();
+    expect(trashed).toHaveLength(2);
   });
 
   it('deleting a canvas preserves its documents and closes its active view', async () => {
@@ -166,6 +303,7 @@ describe('vault lifecycle', () => {
     expect((await repo.readCanvas(canvas.path)).nodes).toEqual([]);
     await fs.writeFile(path.join(root, 'Archive/notes.txt'), 'Changed');
     failTrash = false;
+    failTrashAfter = Infinity;
     expect((await repo.retryRecovery()).recovery?.message).toContain('contents changed externally');
     expect(trashed).toHaveLength(0);
     await fs.writeFile(path.join(root, 'Archive/notes.txt'), 'Original');
@@ -185,7 +323,7 @@ describe('vault lifecycle', () => {
     await store.getState().createDocument();
     const id = store.getState().activeDocumentId!;
     const loaded = store.getState().documents.get(id)!;
-    const external = { ...loaded.file, doc: documentContentSchema.parse(tiptapDocFromPlainText('External text')) };
+    const external = { ...loaded.file, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('External text')) };
     await fs.writeFile(path.join(root, loaded.path), JSON.stringify(external));
     store.getState().updateDocument(id, tiptapDocFromPlainText('Local draft'));
     await expect(store.getState().flush()).rejects.toMatchObject({ failure: { code: 'conflict' } });
@@ -203,7 +341,7 @@ describe('vault lifecycle', () => {
     const id = store.getState().activeDocumentId!;
     const loaded = store.getState().documents.get(id)!;
     store.getState().updateDocument(id, tiptapDocFromPlainText('Local draft'));
-    const external = { ...loaded.file, doc: documentContentSchema.parse(tiptapDocFromPlainText('External text')) };
+    const external = { ...loaded.file, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('External text')) };
     await fs.writeFile(path.join(root, loaded.path), JSON.stringify(external));
     await expect(store.getState().flush()).rejects.toMatchObject({ failure: { code: 'conflict' } });
     await store.getState().resolveConflict('document', id, 'reload');
@@ -293,6 +431,7 @@ describe('vault lifecycle', () => {
     expect((await repo.readCanvas(canvas.path)).nodes).toEqual([]);
     await expect(repo.saveDocument(document.file)).rejects.toThrow('recovery');
     failTrash = false;
+    failTrashAfter = Infinity;
     const reopened = await VaultRepository.open(root, false, trash);
     expect((await reopened.scan()).recovery).toBeNull();
     expect((await reopened.readCanvas(canvas.path)).nodes).toEqual([]);
@@ -305,6 +444,7 @@ describe('vault lifecycle', () => {
     failTrash = true;
     await store.getState().deleteEntry(document.path);
     failTrash = false;
+    failTrashAfter = Infinity;
     expect((await store.getState().retryRecovery()).status).toBe('success');
     expect(store.getState().vault?.recovery).toBeNull();
     expect(store.getState().canvases.get(canvas.file.id)?.file.nodes).toEqual([]);
@@ -318,6 +458,7 @@ describe('vault lifecycle', () => {
     await store.getState().deleteEntry(document.path);
     await fs.rename(path.join(root, document.path), path.join(temporary, 'external-move'));
     failTrash = false;
+    failTrashAfter = Infinity;
     const snapshot = await repo.retryRecovery();
     expect(snapshot.recovery?.message).toContain('source is missing');
     expect(await fs.readFile(path.join(root, '.yantra/deletion.json'), 'utf8')).toContain(document.file.id);
@@ -331,6 +472,7 @@ describe('vault lifecycle', () => {
     const raw = JSON.stringify({ ...newCanvas(canvas.file.title), id: canvas.file.id });
     await fs.writeFile(path.join(root, canvas.path), raw);
     failTrash = false;
+    failTrashAfter = Infinity;
     expect((await repo.retryRecovery()).recovery?.message).toContain('Canvas changed externally');
     expect(await fs.readFile(path.join(root, canvas.path), 'utf8')).toBe(raw);
     expect(trashed).toEqual([]);

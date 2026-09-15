@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { documentTitle, titleFilename, titleNameError, withDocumentTitle } from './document-title';
-import { createEmptyTiptapDoc } from './tiptap-document';
+import { createEmptyTiptapDoc, type TiptapDoc } from './tiptap-document';
 
 describe('document title filenames', () => {
   it('converts every space deterministically without changing case or numbers', () => {
@@ -16,7 +16,7 @@ describe('document title filenames', () => {
     }
   });
   it('updates only the first title block and keeps already-matching content stable', () => {
-    const doc = { ...createEmptyTiptapDoc(), content: [...createEmptyTiptapDoc().content!, { type: 'paragraph', content: [{ type: 'text', text: 'Body 123!' }] }] };
+    const doc = { ...createEmptyTiptapDoc(), content: [...createEmptyTiptapDoc().content!, { type: 'paragraph', content: [{ type: 'text', text: 'Body 123!' }] }] } satisfies TiptapDoc;
     const updated = withDocumentTitle(doc, 'Project 2');
     expect(documentTitle(updated)).toBe('Project 2');
     expect(updated.content?.[1]).toEqual(doc.content[1]);

@@ -1,9 +1,9 @@
 import type { StoreApi } from 'zustand/vanilla';
 import type { YantraVaultApi } from '../../shared/vault-api';
 import type { VaultEntry } from '../../shared/vault-format';
-import { insertEntry as addEntry, vaultNameSchema } from '../../shared/vault-organization';
+import { insertEntry as addEntry, reorderedPaths, vaultNameSchema } from '../../shared/vault-organization';
 import { documentTitle, titleFilename } from '../../shared/document-title';
-import { cancelled, OperationError, unwrapOperation } from '../../shared/operation-result';
+import { cancelled, failure, OperationError, unwrapOperation } from '../../shared/operation-result';
 import { vaultTrace } from '../persistence/vault-diagnostics';
 import type { VaultWorkspaceState } from './workspace-types';
 import type { createWorkspaceResources } from './workspace-resources';
@@ -77,12 +77,42 @@ export function createOrganizationActions(api: YantraVaultApi, set: StoreApi<Vau
         }
       });
     },
-    moveEntry(path, folder) {
+    moveEntry(path, folder, placement) {
+      if (placement) {
+        const session = get().vault?.sessionId;
+        return operations.runBackgroundOperation(async () => {
+          const vault = get().vault;
+          if (!vault || vault.sessionId !== session) return cancelled('superseded');
+          const siblings = folder ? findEntry(vault.entries, folder)?.children : vault.entries;
+          const source = siblings?.find((entry) => entry.path === path);
+          const anchor = siblings?.find((entry) => entry.path === placement.anchor);
+          if (!siblings || !source || source.error || !anchor || (source.kind === 'folder') !== (anchor.kind === 'folder')) {
+            throw new OperationError({ code: 'invalid-input', message: 'Reorder existing siblings within the same folder/file group.' });
+          }
+          const before = vault.metadata.sidebarOrder;
+          const order = reorderedPaths(siblings, before ?? [], path, placement);
+          if (order.length === (before?.length ?? 0) && order.every((item, index) => item === before?.[index])) return;
+          set({ vault: { ...vault, metadata: { ...vault.metadata, sidebarOrder: order } } });
+          try {
+            const change = await api.moveEntry(vault.sessionId, path, folder, placement).then(unwrapOperation);
+            const current = get().vault;
+            if (current?.sessionId === session && change.sidebarOrder
+              && (change.sidebarOrder.length !== order.length || change.sidebarOrder.some((item, index) => item !== order[index]))) {
+              set({ vault: { ...current, metadata: { ...current.metadata, sidebarOrder: change.sidebarOrder } } });
+            }
+          } catch (error) {
+            const current = get().vault;
+            if (current?.sessionId !== session) return cancelled('superseded');
+            set({ vault: { ...current, metadata: { ...current.metadata, sidebarOrder: before } } });
+            return failure(error);
+          }
+        });
+      }
       return organize(async (vault) => {
         const entry = findEntry(vault.entries, path);
         if (!entry || entry.error) throw new OperationError({ code: 'invalid-input', message: 'Choose a valid file or folder.' });
         if (folder && findEntry(vault.entries, folder)?.kind !== 'folder') throw new OperationError({ code: 'invalid-input', message: 'Choose a valid destination folder.' });
-        applyEntryChange(await api.moveEntry(vault.sessionId, path, folder).then(unwrapOperation));
+        applyEntryChange(await api.moveEntry(vault.sessionId, path, folder, placement).then(unwrapOperation));
       });
     },
   };

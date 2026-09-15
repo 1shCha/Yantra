@@ -1,18 +1,8 @@
 import type { Edge, Node } from '@xyflow/react';
+import type { CanvasEnd, CanvasSide, CanvasEdge, CanvasGroup as StoredCanvasGroup } from '../../shared/canvas-elements';
+import type { TiptapDoc } from '../../shared/tiptap-document';
 
-import {
-  JSON_CANVAS_TEXT_NODE_TYPE,
-  REACT_FLOW_TEXT_NODE_TYPE,
-  sanitizeJsonCanvasGroups,
-  type CanvasEnd,
-  type CanvasSide,
-  type JsonCanvasDocument,
-  type JsonCanvasEdge,
-  type JsonCanvasGroup,
-  type JsonCanvasNode,
-} from '../../shared/json-canvas';
-import { reconcileLayerOrder } from '../../shared/stacking-order';
-import { createEmptyTiptapDoc, type TiptapDoc } from '../../shared/tiptap-document';
+export const REACT_FLOW_TEXT_NODE_TYPE = 'markdownNode' as const;
 
 const NODE_WIDTH = 320;
 const NODE_HEIGHT = 220;
@@ -21,11 +11,10 @@ export const MARKDOWN_NODE_MIN_WIDTH = 220;
 export const MARKDOWN_NODE_MIN_HEIGHT = 160;
 
 export interface MarkdownNodeData extends Record<string, unknown> {
-  canvasType: typeof JSON_CANVAS_TEXT_NODE_TYPE;
+  canvasType: 'text';
   doc?: TiptapDoc;
   documentId?: string;
   color?: string;
-  showCreatePlaceholder?: boolean;
 }
 
 export type MarkdownFlowNode = Node<MarkdownNodeData, typeof REACT_FLOW_TEXT_NODE_TYPE>;
@@ -39,37 +28,10 @@ interface MarkdownFlowEdgeData extends Record<string, unknown> {
 }
 
 export type MarkdownFlowEdge = Edge<MarkdownFlowEdgeData>;
-export type CanvasGroup = JsonCanvasGroup;
-
-export interface CanvasFlowState {
-  nodes: MarkdownFlowNode[];
-  edges: MarkdownFlowEdge[];
-  groups: CanvasGroup[];
-  layerOrder?: readonly string[];
-}
+export type CanvasGroup = StoredCanvasGroup;
 
 function toCanvasInteger(value: number, fallback = 0): number {
   return Number.isFinite(value) ? Math.round(value) : fallback;
-}
-
-function jsonCanvasNodeToReactFlowNode(node: JsonCanvasNode): MarkdownFlowNode {
-  return {
-    id: node.id,
-    type: REACT_FLOW_TEXT_NODE_TYPE,
-    position: {
-      x: node.x,
-      y: node.y,
-    },
-    data: {
-      canvasType: node.type,
-      doc: node.doc,
-      color: node.color,
-    },
-    style: {
-      width: node.width,
-      height: node.height,
-    },
-  };
 }
 
 function readDimension(value: number | string | undefined): number {
@@ -90,21 +52,7 @@ export function getFlowNodeHeight(node: MarkdownFlowNode): number {
   return toCanvasInteger(raw, NODE_HEIGHT);
 }
 
-function jsonCanvasNodeFromFlowNode(node: MarkdownFlowNode): JsonCanvasNode {
-  if (!node.data.doc || node.data.documentId) throw new Error('Document references must use vault canvas persistence.');
-  return {
-    id: node.id,
-    type: JSON_CANVAS_TEXT_NODE_TYPE,
-    x: toCanvasInteger(Number(node.position.x)),
-    y: toCanvasInteger(Number(node.position.y)),
-    width: getFlowNodeWidth(node),
-    height: getFlowNodeHeight(node),
-    doc: node.data.doc,
-    color: node.data.color,
-  };
-}
-
-function jsonCanvasEdgeToReactFlowEdge(edge: JsonCanvasEdge): MarkdownFlowEdge {
+function jsonCanvasEdgeToReactFlowEdge(edge: CanvasEdge): MarkdownFlowEdge {
   return {
     id: edge.id,
     source: edge.fromNode,
@@ -120,7 +68,7 @@ function jsonCanvasEdgeToReactFlowEdge(edge: JsonCanvasEdge): MarkdownFlowEdge {
   };
 }
 
-export function jsonCanvasEdgeFromFlowEdge(edge: MarkdownFlowEdge): JsonCanvasEdge {
+export function jsonCanvasEdgeFromFlowEdge(edge: MarkdownFlowEdge): CanvasEdge {
   return {
     id: edge.id,
     fromNode: edge.source,
@@ -134,85 +82,10 @@ export function jsonCanvasEdgeFromFlowEdge(edge: MarkdownFlowEdge): JsonCanvasEd
   };
 }
 
-export function createMarkdownNodeAt(position: { x: number; y: number }): MarkdownFlowNode {
-  const node = jsonCanvasNodeToReactFlowNode({
-    id: crypto.randomUUID(),
-    type: JSON_CANVAS_TEXT_NODE_TYPE,
-    x: toCanvasInteger(position.x - NODE_WIDTH / 2),
-    y: toCanvasInteger(position.y - NODE_HEIGHT / 2),
-    width: NODE_WIDTH,
-    height: NODE_HEIGHT,
-    doc: createEmptyTiptapDoc(),
-  });
-
-  return {
-    ...node,
-    data: {
-      ...node.data,
-      showCreatePlaceholder: true,
-    },
-  };
-}
-
-export function toJsonCanvasDocument(state: CanvasFlowState): JsonCanvasDocument {
-  const groups = state.groups.map((group) => ({
-    id: group.id,
-    nodeIds: [...group.nodeIds],
-  }));
-
-  return {
-    nodes: state.nodes.map(jsonCanvasNodeFromFlowNode),
-    edges: state.edges.map(jsonCanvasEdgeFromFlowEdge),
-    groups,
-    layerOrder: reconcileLayerOrder(
-      state.layerOrder ?? [],
-      state.nodes.map((node) => node.id),
-      groups,
-    ),
-  };
-}
-
-export function hydrateNodes(nodes: JsonCanvasNode[] | undefined): MarkdownFlowNode[] {
-  if (!Array.isArray(nodes)) {
-    return [];
-  }
-
-  return nodes.map(jsonCanvasNodeToReactFlowNode);
-}
-
-export function hydrateEdges(edges: JsonCanvasEdge[] | undefined): MarkdownFlowEdge[] {
+export function hydrateEdges(edges: CanvasEdge[] | undefined): MarkdownFlowEdge[] {
   if (!Array.isArray(edges)) {
     return [];
   }
 
   return edges.map(jsonCanvasEdgeToReactFlowEdge);
-}
-
-export function hydrateGroups(
-  groups: JsonCanvasGroup[] | undefined,
-  nodes: readonly MarkdownFlowNode[],
-): CanvasGroup[] {
-  if (!Array.isArray(groups)) {
-    return [];
-  }
-
-  return sanitizeJsonCanvasGroups(
-    groups,
-    new Set(nodes.map((node) => node.id)),
-  ).map((group) => ({
-    id: group.id,
-    nodeIds: [...group.nodeIds],
-  }));
-}
-
-export function hydrateLayerOrder(
-  layerOrder: readonly string[] | undefined,
-  nodes: readonly MarkdownFlowNode[],
-  groups: readonly CanvasGroup[],
-): string[] {
-  return reconcileLayerOrder(
-    layerOrder ?? [],
-    nodes.map((node) => node.id),
-    groups,
-  );
 }

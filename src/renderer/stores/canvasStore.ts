@@ -1,20 +1,13 @@
 import { applyEdgeChanges, applyNodeChanges, type EdgeChange, type NodeChange } from '@xyflow/react';
 import { create } from 'zustand';
 
-import type { JsonCanvasDocument } from '../../shared/json-canvas';
 import {
   moveUnitToFront,
   reconcileLayerOrder,
   stackingUnitIdForNode,
 } from '../../shared/stacking-order';
-import { isSameTiptapDoc, type TiptapDoc } from '../../shared/tiptap-document';
+import { type TiptapDoc } from '../../shared/tiptap-document';
 import {
-  createMarkdownNodeAt,
-  hydrateEdges,
-  hydrateGroups,
-  hydrateLayerOrder,
-  hydrateNodes,
-  toJsonCanvasDocument,
   type CanvasGroup,
   type MarkdownFlowEdge,
   type MarkdownFlowNode,
@@ -37,7 +30,6 @@ export interface CanvasState {
     geometry: { x: number; y: number; width: number; height: number },
   ) => void;
   updateNodeDoc: (nodeId: string, doc: TiptapDoc) => void;
-  dismissCreatePlaceholder: (nodeId: string) => void;
   selectNode: (nodeId: string) => void;
   toggleNodeSelection: (nodeId: string) => void;
   editNode: (nodeId: string) => void;
@@ -51,17 +43,15 @@ export interface CanvasState {
   raiseStackingUnit: (unitId: string) => void;
   deleteSelectedNodes: () => void;
   deleteSelectedGroup: () => void;
-  getJsonCanvasDocument: () => JsonCanvasDocument;
-  loadJsonCanvasDocument: (document: JsonCanvasDocument | null | undefined) => void;
 }
 
 function applySelectedNodeIds(nodes: MarkdownFlowNode[], selectedNodeIds: string[]): MarkdownFlowNode[] {
   const selectedNodeIdSet = new Set(selectedNodeIds);
 
-  return nodes.map((node) => ({
-    ...node,
-    selected: selectedNodeIdSet.has(node.id),
-  }));
+  return nodes.map((node) => {
+    const selected = selectedNodeIdSet.has(node.id);
+    return Boolean(node.selected) === selected ? node : { ...node, selected };
+  });
 }
 
 function getNodeIdsWithToggledSelection(selectedNodeIds: string[], nodeId: string): string[] {
@@ -131,12 +121,13 @@ function replaceGroupWithMembers(
 }
 
 interface CanvasStoreOptions {
-  onCreateNode?: (position: { x: number; y: number }) => void;
-  onUpdateNodeDoc?: (nodeId: string, doc: TiptapDoc) => void;
+  onCreateNode: (position: { x: number; y: number }) => void;
+  onUpdateNodeDoc: (nodeId: string, doc: TiptapDoc) => void;
   allowRemoval?: boolean;
+  onDeleteNodes?: (nodeIds: string[]) => void;
 }
 
-export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<CanvasState>()((set, get) => ({
+export const createCanvasStore = (options: CanvasStoreOptions) => create<CanvasState>()((set, get) => ({
   nodes: [],
   edges: [],
   groups: [],
@@ -148,7 +139,10 @@ export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<Ca
   onNodesChange: (changes) => {
     const currentState = get();
     const canMoveNodes = currentState.selectedNodeIds.length <= 1;
+    const removedIds = changes.filter((change) => change.type === 'remove').map((change) => change.id);
+    if (options.allowRemoval !== false && options.onDeleteNodes && removedIds.length) options.onDeleteNodes(removedIds);
     const nodeChanges = changes.filter((change) => {
+      if (options.onDeleteNodes && change.type === 'remove') return false;
       if (options.allowRemoval === false && change.type === 'remove') return false;
       if (!canMoveNodes && change.type === 'position') {
         return false;
@@ -180,33 +174,7 @@ export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<Ca
     });
   },
 
-  createMarkdownNode: (position) => {
-    if (options.onCreateNode) { options.onCreateNode(position); return; }
-    const node = createMarkdownNodeAt(position);
-    const currentState = get();
-    const nodes = [
-      ...currentState.nodes.map((existingNode) => ({
-        ...existingNode,
-        selected: false,
-      })),
-      {
-        ...node,
-        selected: true,
-      },
-    ];
-
-    set({
-      nodes,
-      layerOrder: layerOrderFor(
-        moveUnitToFront(currentState.layerOrder, node.id),
-        nodes,
-        currentState.groups,
-      ),
-      selectedNodeIds: [node.id],
-      selectedGroupId: null,
-      editingNodeId: null,
-    });
-  },
+  createMarkdownNode: options.onCreateNode,
 
   setNodePosition: (nodeId, position) => {
     set({
@@ -266,42 +234,7 @@ export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<Ca
     });
   },
 
-  updateNodeDoc: (nodeId, doc) => {
-    if (options.onUpdateNodeDoc) { options.onUpdateNodeDoc(nodeId, doc); return; }
-    set({
-      nodes: get().nodes.map((node) => {
-        if (node.id !== nodeId || (node.data.doc && isSameTiptapDoc(node.data.doc, doc))) {
-          return node;
-        }
-
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            doc,
-          },
-        };
-      }),
-    });
-  },
-
-  dismissCreatePlaceholder: (nodeId) => {
-    set({
-      nodes: get().nodes.map((node) => {
-        if (node.id !== nodeId || node.data.showCreatePlaceholder !== true) {
-          return node;
-        }
-
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            showCreatePlaceholder: false,
-          },
-        };
-      }),
-    });
-  },
+  updateNodeDoc: options.onUpdateNodeDoc,
 
   selectNode: (nodeId) => {
     const selectedNodeIds = [nodeId];
@@ -512,6 +445,8 @@ export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<Ca
       return;
     }
 
+    if (options.onDeleteNodes) { options.onDeleteNodes([...selectedNodeIds]); return; }
+
     const nodes = currentState.nodes.filter((node) => !selectedNodeIds.has(node.id));
     const groups = removeNodeIdsFromGroups(currentState.groups, selectedNodeIds);
 
@@ -538,6 +473,8 @@ export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<Ca
       return;
     }
 
+    if (options.onDeleteNodes) { options.onDeleteNodes(selectedGroup.nodeIds); return; }
+
     const memberNodeIds = new Set(selectedGroup.nodeIds);
     const nodes = currentState.nodes.filter((node) => !memberNodeIds.has(node.id));
     const groups = currentState.groups.filter((group) => group.id !== selectedGroup.id);
@@ -555,22 +492,4 @@ export const createCanvasStore = (options: CanvasStoreOptions = {}) => create<Ca
     });
   },
 
-  getJsonCanvasDocument: () => toJsonCanvasDocument(get()),
-
-  loadJsonCanvasDocument: (document) => {
-    const nodes = hydrateNodes(document?.nodes);
-    const groups = hydrateGroups(document?.groups, nodes);
-
-    set({
-      nodes,
-      edges: hydrateEdges(document?.edges),
-      groups,
-      layerOrder: hydrateLayerOrder(document?.layerOrder, nodes, groups),
-      selectedNodeIds: [],
-      selectedGroupId: null,
-      editingNodeId: null,
-    });
-  },
 }));
-
-export const useCanvasStore = createCanvasStore();

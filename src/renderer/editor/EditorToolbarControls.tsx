@@ -1,3 +1,5 @@
+import { EquationDialog } from './EquationDialog';
+import { openEquationEditor } from './equation-events';
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode, type SVGProps } from 'react';
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
@@ -34,6 +36,7 @@ interface EditorToolbarState {
   isBold: boolean;
   isBulletList: boolean;
   isCodeBlock: boolean;
+  isCode: boolean;
   isHighlight: boolean;
   isItalic: boolean;
   isLink: boolean;
@@ -166,6 +169,7 @@ function readToolbarState(editor: Editor): EditorToolbarState {
     isBold: editor.isActive('bold'),
     isBulletList: editor.isActive('bulletList'),
     isCodeBlock: editor.isActive('codeBlock'),
+    isCode: editor.isActive('code'),
     isHighlight: editor.isActive('highlight'),
     isItalic: editor.isActive('italic'),
     isLink: editor.isActive('link'),
@@ -298,6 +302,8 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
   }, [openMenu]);
 
   return (
+    <>
+    <EquationDialog editor={editor} />
     <aside
       ref={toolbarRef}
       className="editor-toolbar nodrag nopan nowheel"
@@ -439,6 +445,13 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
 
       <span className="editor-toolbar__divider" role="separator" />
 
+      <ToolbarButton
+        label={state.isCode ? 'Convert to equation' : 'Insert equation'}
+        disabled={state.isCodeBlock}
+        onClick={() => openEquationEditor(editor)}
+      >
+        <span aria-hidden="true">∑</span>
+      </ToolbarButton>
       <ToolbarButton
         label="Code block"
         pressed={state.isCodeBlock}
@@ -626,5 +639,6 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
       </ToolbarButton>
       </fieldset>
     </aside>
+    </>
   );
 }

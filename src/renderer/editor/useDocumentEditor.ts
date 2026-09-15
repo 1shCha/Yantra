@@ -1,5 +1,8 @@
+import { Clipboard, Markdown } from './clipboard';
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { openEquationEditor } from './equation-events';
 import { useEditor, type Editor, type EditorOptions } from '@tiptap/react';
-import { useLayoutEffect, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import { tiptapDocSchema, type TiptapDoc } from '../../shared/tiptap-document';
 import { documentEditorExtensions } from './tiptap-schema';
@@ -26,22 +29,25 @@ export function useDocumentEditor({
   onChange,
   onTitleCommit,
 }: DocumentEditorOptions) {
+  const editorRef = useRef<Editor | null>(null);
   const [titleError, setTitleError] = useState<string | null>(null);
   const titleCommit = useTitleCommit(initialContent, onTitleCommit, setTitleError);
   const editor = useEditor({
     immediatelyRender: false,
-    extensions: documentEditorExtensions.map((extension) => extension.name === ProtectedTitle.name
+    extensions: [Markdown, Clipboard, ...documentEditorExtensions.map((extension) => extension.name === 'inlineMath' || extension.name === 'blockMath'
+      ? extension.configure({ onClick: (_node: ProseMirrorNode, pos: number) => { if (editorRef.current) openEquationEditor(editorRef.current, pos); } })
+      : extension.name === ProtectedTitle.name
       ? ProtectedTitle.configure({
         onInvalidInput: () => setTitleError(TITLE_INPUT_ERROR),
         onCommit: (current) => titleCommit.enter(current),
-      }) : extension),
+      }) : extension)],
     content: initialContent,
     editable,
     editorProps,
-    onCreate: ({ editor }) => { titleCommit.created(editor); onCreate?.(editor); },
+    onCreate: ({ editor }) => { editorRef.current = editor; titleCommit.created(editor); onCreate?.(editor); },
     onSelectionUpdate: ({ editor }) => titleCommit.selectionChanged(editor),
     onBlur: ({ editor }) => titleCommit.blurred(editor),
-    onDestroy: () => titleCommit.destroyed(),
+    onDestroy: () => { editorRef.current = null; titleCommit.destroyed(); },
     onUpdate: ({ editor }) => {
       if (!editor.isEditable) return;
       setTitleError(null);

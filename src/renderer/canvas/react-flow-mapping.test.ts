@@ -1,72 +1,25 @@
 import { describe, expect, it } from 'vitest';
+import { getFlowNodeWidth, getFlowNodeHeight, hydrateEdges, jsonCanvasEdgeFromFlowEdge, type MarkdownFlowNode } from './react-flow-mapping';
 
-import { REACT_FLOW_TEXT_NODE_TYPE, JSON_CANVAS_TEXT_NODE_TYPE } from '../../shared/json-canvas';
-import { tiptapDocFromPlainText } from '../../shared/tiptap-document';
-import { toJsonCanvasDocument, createMarkdownNodeAt, type MarkdownFlowNode } from './react-flow-mapping';
-
-function createFlowNode(overrides: Partial<MarkdownFlowNode> = {}): MarkdownFlowNode {
-  return {
-    id: 'node-1',
-    type: REACT_FLOW_TEXT_NODE_TYPE,
-    position: { x: 10, y: 20 },
-    data: {
-      canvasType: JSON_CANVAS_TEXT_NODE_TYPE,
-      doc: tiptapDocFromPlainText('Hello'),
-    },
-    style: {
-      width: 320,
-      height: 220,
-    },
-    ...overrides,
-  };
+function node(overrides: Partial<MarkdownFlowNode> = {}): MarkdownFlowNode {
+  return { id: 'node', type: 'markdownNode', position: { x: 10, y: 20 },
+    data: { canvasType: 'text', documentId: 'document' }, style: { width: 320, height: 220 }, ...overrides };
 }
-
-describe('toJsonCanvasDocument', () => {
-  it('persists resized dimensions from measured width and height', () => {
-    const document = toJsonCanvasDocument({
-      nodes: [
-        createFlowNode({
-          measured: { width: 480, height: 360 },
-        }),
-      ],
-      edges: [],
-      groups: [],
-    });
-
-    expect(document.nodes[0]).toMatchObject({
-      width: 480,
-      height: 360,
-    });
+describe('flow dimensions', () => {
+  it('prefers measurements after resizing over stale width and style', () => {
+    const resized = node({ width: 320, height: 220, measured: { width: 480, height: 360 } });
+    expect(getFlowNodeWidth(resized)).toBe(480);
+    expect(getFlowNodeHeight(resized)).toBe(360);
   });
-
-  it('prefers measured dimensions over stale style values after resize', () => {
-    const document = toJsonCanvasDocument({
-      nodes: [
-        createFlowNode({
-          measured: { width: 410, height: 290 },
-          style: { width: 320, height: 220 },
-        }),
-      ],
-      edges: [],
-      groups: [],
-    });
-
-    expect(document.nodes[0]?.width).toBe(410);
-    expect(document.nodes[0]?.height).toBe(290);
+  it('uses explicit dimensions, then style, then defaults', () => {
+    expect(getFlowNodeWidth(node({ width: 410 }))).toBe(410);
+    expect(getFlowNodeHeight(node({ style: { height: '290' } }))).toBe(290);
+    expect(getFlowNodeWidth(node({ style: {} }))).toBe(320);
+    expect(getFlowNodeHeight(node({ style: {} }))).toBe(220);
   });
 });
-
-describe('createMarkdownNodeAt', () => {
-  it('marks a new node for a one-time empty-editor placeholder and does not persist that mark', () => {
-    const node = createMarkdownNodeAt({ x: 100, y: 80 });
-
-    expect(node.data.showCreatePlaceholder).toBe(true);
-    expect(
-      toJsonCanvasDocument({
-        nodes: [node],
-        edges: [],
-        groups: [],
-      }).nodes[0],
-    ).not.toHaveProperty('showCreatePlaceholder');
-  });
+it('preserves edge endpoints, decoration and label through flow mapping', () => {
+  const edge = { id: 'edge', fromNode: 'a', toNode: 'b', fromSide: 'top', toSide: 'left',
+    fromEnd: 'none', toEnd: 'arrow', color: '#ff0000', label: 'Relation' } as const;
+  expect(hydrateEdges([edge]).map(jsonCanvasEdgeFromFlowEdge)).toEqual([edge]);
 });

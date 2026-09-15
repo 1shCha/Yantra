@@ -56,11 +56,12 @@ contextBridge.exposeInMainWorld('yantraCanvas', yantraCanvas);
 
 const yantraVault: YantraVaultApi = {
   refresh: (sessionId) => ipcRenderer.invoke(VAULT_CHANNELS.REFRESH, sessionId),
+  deleteCanvasNodes: (sessionId, canvasId, nodeIds) => ipcRenderer.invoke(VAULT_CHANNELS.DELETE_CANVAS_NODES, sessionId, canvasId, nodeIds),
   deleteEntry: (sessionId, path) => ipcRenderer.invoke(VAULT_CHANNELS.DELETE_ENTRY, sessionId, path),
   retryRecovery: (sessionId) => ipcRenderer.invoke(VAULT_CHANNELS.RETRY_RECOVERY, sessionId),
   createFolder: (sessionId, folder, name) => ipcRenderer.invoke(VAULT_CHANNELS.CREATE_FOLDER, sessionId, folder, name),
   renameEntry: (sessionId, path, name, documentTitle) => ipcRenderer.invoke(VAULT_CHANNELS.RENAME_ENTRY, sessionId, path, name, documentTitle),
-  moveEntry: (sessionId, path, folder) => ipcRenderer.invoke(VAULT_CHANNELS.MOVE_ENTRY, sessionId, path, folder),
+  moveEntry: (sessionId, path, folder, placement) => ipcRenderer.invoke(VAULT_CHANNELS.MOVE_ENTRY, sessionId, path, folder, placement),
   readCanvas: (sessionId, path, mode) => ipcRenderer.invoke(VAULT_CHANNELS.READ_CANVAS, sessionId, path, mode),
   createCanvas: (sessionId, folder) => ipcRenderer.invoke(VAULT_CHANNELS.CREATE_CANVAS, sessionId, folder),
   saveCanvas: (sessionId, canvas, overwrite) => ipcRenderer.invoke(VAULT_CHANNELS.SAVE_CANVAS, sessionId, canvas, overwrite),

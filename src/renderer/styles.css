@@ -93,24 +93,6 @@ textarea {
   right: calc(var(--right-sidebar-width, 165px) - 3px);
 }
 
-.app-shell__resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  background: transparent;
-  transition: background 120ms ease;
-}
-
-.app-shell__resizer:hover::after,
-.app-shell__resizer:focus-visible::after,
-.app-shell__resizer[data-resizing='true']::after {
-  background: rgba(250, 252, 255, 0.45);
-}
-
 .app-shell__resizer:focus-visible {
   outline: none;
 }
@@ -908,14 +890,6 @@ textarea {
 .markdown-node__body pre code,
 .markdown-node__prose pre code {
   font: inherit;
-}
-
-.markdown-node__editor[data-create-placeholder='true'] .markdown-node__prose > p.is-editor-empty::before {
-  color: #8e8b7c;
-  content: attr(data-placeholder);
-  float: left;
-  height: 0;
-  pointer-events: none;
 }
 
 .markdown-node__editor:focus-within li p.is-empty {

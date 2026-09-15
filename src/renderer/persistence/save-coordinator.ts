@@ -157,6 +157,13 @@ export class SaveCoordinator<T> {
     while (resource.active) await resource.active;
   }
 
+  unregister(id: string): void {
+    const resource = this.resource(id);
+    if (resource.active || resource.revision !== resource.savedRevision) throw new Error('Flush pending edits before removing a resource.');
+    this.clearTimer(resource);
+    this.resources.delete(id);
+  }
+
   replaceCleanSnapshot(id: string, snapshot: T): void {
     const resource = this.resource(id);
     if (resource.active || resource.revision !== resource.savedRevision || resource.error) throw new Error('Flush pending edits before replacing saved metadata.');

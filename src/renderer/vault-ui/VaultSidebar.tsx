@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type DragEvent, type HTMLAttributes, type MouseEvent } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type HTMLAttributes, type MouseEvent } from 'react';
 import { SidebarIcon } from './SidebarIcon';
-import { canDropInto, type VaultEntryKind } from '../vault/vault-organize-helpers';
+import type { EntryPlacement } from '../../shared/vault-organization';
+import { parentFolderOf, canDropInto, type VaultEntryKind } from '../vault/vault-organize-helpers';
 
 export interface VaultTreeEntry {
   id: string;
@@ -25,7 +26,7 @@ interface VaultSidebarProps {
   disabled?: boolean;
   onSelectRoot?: () => void;
   /** Enables drag-and-drop moves; called with the dragged path and destination folder ('' = root). */
-  onMoveEntry?: (path: string, folder: string) => void;
+  onMoveEntry?: (path: string, folder: string, placement?: EntryPlacement) => void;
   /** Expands a folder without changing the selected destination (used while dragging over it). */
   onExpandFolder?: (id: string) => void;
   /** Opens a context menu for an entry at a viewport position. */
@@ -38,9 +39,49 @@ const DRAG_SCROLL_STEP_PX = 9;
 
 type DropHandlers = Pick<HTMLAttributes<HTMLElement>, 'onDragEnter' | 'onDragOver' | 'onDragLeave' | 'onDrop'>;
 
-export function VaultSidebar(props: VaultSidebarProps) {
+interface RowActions {
+  beginDrag: (entry: VaultTreeEntry) => (event: DragEvent<HTMLButtonElement>) => void;
+  endDrag: () => void;
+  dropHandlers: (entry: VaultTreeEntry) => DropHandlers;
+  menu: (entry: VaultTreeEntry) => ((event: MouseEvent<HTMLButtonElement>) => void) | undefined;
+  open: (entry: VaultTreeEntry) => void;
+}
+
+const VaultTreeRow = memo(function VaultTreeRow({ entry, expanded, selected, dragging, dropping, insertion, disabled, draggable, actions }: {
+  entry: VaultTreeEntry; expanded: boolean; selected: boolean; dragging: boolean; dropping: boolean;
+  insertion?: 'before' | 'after'; disabled: boolean; draggable: boolean; actions: RowActions;
+}) {
+  const isFolder = entry.kind === 'folder';
+  const icon = isFolder ? (expanded ? 'openFolder' : 'folder') : entry.kind === 'canvas' ? 'canvas' : 'document';
+  return <button
+    className={`vault-tree__row${selected ? ' vault-tree__row--selected' : ''}${dragging ? ' vault-tree__row--dragging' : ''}${dropping ? ' vault-tree__row--drop' : ''}${insertion ? ` vault-tree__row--insert-${insertion}` : ''}`}
+    title={entry.error ?? entry.name} disabled={disabled} aria-current={selected ? 'page' : undefined}
+    aria-expanded={isFolder ? expanded : undefined} data-path={entry.id} draggable={draggable}
+    onDragStart={(event) => actions.beginDrag(entry)(event)} onDragEnd={() => actions.endDrag()}
+    onClick={() => actions.open(entry)} onContextMenu={(event) => actions.menu(entry)?.(event)}
+    onDragEnter={(event) => actions.dropHandlers(entry).onDragEnter?.(event)}
+    onDragOver={(event) => actions.dropHandlers(entry).onDragOver?.(event)}
+    onDragLeave={(event) => actions.dropHandlers(entry).onDragLeave?.(event)}
+    onDrop={(event) => actions.dropHandlers(entry).onDrop?.(event)}>
+    {isFolder ? (expanded ? <SidebarIcon kind="chevronDown" size={12} /> : <SidebarIcon kind="chevronRight" size={12} />) : <span className="vault-tree__spacer" />}
+    <SidebarIcon kind={icon} />
+    <span className="vault-tree__name">{entry.name}</span>
+  </button>;
+});
+
+const VaultSidebarActions = memo(function VaultSidebarActions(props: Pick<VaultSidebarProps, 'disabled' | 'onCreateDocument' | 'onCreateCanvas' | 'onCreateFolder' | 'onRefresh'>) {
+  return <div className="vault-sidebar__actions" role="toolbar" aria-label="Vault actions">
+    <button disabled={props.disabled} title="New Document" aria-label="New Document" onClick={props.onCreateDocument}><SidebarIcon kind="newDocument" /><span>New document</span></button>
+    {props.onCreateCanvas && <button disabled={props.disabled} title="New Canvas" aria-label="New Canvas" onClick={props.onCreateCanvas}><SidebarIcon kind="canvas" /><span>New canvas</span></button>}
+    {props.onCreateFolder && <button disabled={props.disabled} title="New Folder" aria-label="New Folder" onClick={props.onCreateFolder}><SidebarIcon kind="newFolder" /><span>New folder</span></button>}
+    {props.onRefresh && <button disabled={props.disabled} title="Refresh Vault" aria-label="Refresh Vault" onClick={props.onRefresh}><SidebarIcon kind="refresh" /><span>Refresh vault</span></button>}
+  </div>;
+});
+
+export const VaultSidebar = memo(function VaultSidebar(props: VaultSidebarProps) {
   const [dragging, setDragging] = useState<{ path: string; kind: VaultEntryKind } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [insertion, setInsertion] = useState<EntryPlacement | null>(null);
   const treeRef = useRef<HTMLElement>(null);
   const pointerY = useRef(0);
   const expandTimer = useRef<{ id: string; timer: number } | null>(null);
@@ -55,6 +96,7 @@ export function VaultSidebar(props: VaultSidebarProps) {
   }
 
   function endDrag() {
+    setInsertion(null);
     setDragging(null);
     setDropTarget(null);
     clearExpandTimer();
@@ -84,10 +126,11 @@ export function VaultSidebar(props: VaultSidebarProps) {
   /** Drop handling for a destination folder ('' = vault root). Rows stop propagation so the
       tree-background handlers only see drags over empty space. */
   function dropHandlers(folder: string, expandable: boolean): DropHandlers {
-    if (!onMoveEntry) return {};
+    if (!onMoveEntry || props.disabled) return {};
     return {
       onDragEnter: (event) => {
         event.stopPropagation();
+        setInsertion(null);
         if (!dragging || !canDropInto(dragging, folder)) return;
         event.preventDefault();
         if (expandable && !props.expandedIds.has(folder) && expandTimer.current?.id !== folder) {
@@ -103,10 +146,11 @@ export function VaultSidebar(props: VaultSidebarProps) {
       },
       onDragOver: (event) => {
         event.stopPropagation();
+        setInsertion(null);
         if (!dragging || !canDropInto(dragging, folder)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
-        if (dropTarget !== folder) setDropTarget(folder);
+        setDropTarget(folder);
       },
       onDragLeave: (event) => {
         if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
@@ -115,6 +159,7 @@ export function VaultSidebar(props: VaultSidebarProps) {
       },
       onDrop: (event) => {
         event.stopPropagation();
+        setInsertion(null);
         if (!dragging || !canDropInto(dragging, folder)) return;
         event.preventDefault();
         const source = dragging.path;
@@ -124,12 +169,54 @@ export function VaultSidebar(props: VaultSidebarProps) {
     };
   }
 
-  /** Files are never drop destinations; swallow the events so the root background does not claim them. */
-  const inertDropHandlers: DropHandlers = {
-    onDragEnter: (event) => event.stopPropagation(),
-    onDragOver: (event) => event.stopPropagation(),
-    onDrop: (event) => event.stopPropagation(),
-  };
+  function rowDropHandlers(entry: VaultTreeEntry): DropHandlers {
+    const folderHandlers = entry.kind === 'folder' ? dropHandlers(entry.id, true) : {};
+    function placementAt(event: DragEvent<HTMLElement>): EntryPlacement | null {
+      if (!dragging || props.disabled || entry.unavailable || !onMoveEntry || dragging.path === entry.id
+        || parentFolderOf(dragging.path) !== parentFolderOf(entry.id)
+        || (dragging.kind === 'folder') !== (entry.kind === 'folder')) return null;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const fraction = (event.clientY - rect.top) / rect.height;
+      if (entry.kind === 'folder' && fraction > .25 && fraction < .75) return null;
+      return { anchor: entry.id, side: fraction < .5 ? 'before' : 'after' };
+    }
+    const hover = (event: DragEvent<HTMLElement>) => {
+      event.stopPropagation();
+      const placement = placementAt(event);
+      if (placement) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        clearExpandTimer();
+        setDropTarget(null);
+        setInsertion((current) => current?.anchor === placement.anchor && current.side === placement.side ? current : placement);
+      } else {
+        if (entry.kind !== 'folder') clearExpandTimer();
+        setInsertion(null);
+        if (!dragging || entry.kind !== 'folder' || !canDropInto(dragging, entry.id)) setDropTarget(null);
+        folderHandlers.onDragEnter?.(event);
+        folderHandlers.onDragOver?.(event);
+      }
+    };
+    return {
+      onDragEnter: hover,
+      onDragOver: hover,
+      onDragLeave: (event) => {
+        if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+        setInsertion(null);
+        folderHandlers.onDragLeave?.(event);
+      },
+      onDrop: (event) => {
+        event.stopPropagation();
+        const placement = placementAt(event);
+        if (placement && dragging && onMoveEntry) {
+          event.preventDefault();
+          const source = dragging.path;
+          endDrag();
+          onMoveEntry(source, parentFolderOf(entry.id), placement);
+        } else folderHandlers.onDrop?.(event);
+      },
+    };
+  }
 
   function entryMenuHandler(entry: VaultTreeEntry) {
     const { onEntryMenu } = props;
@@ -154,10 +241,24 @@ export function VaultSidebar(props: VaultSidebarProps) {
     }
   }, [props.selectedId, props.expandedIds]);
 
-  const identity = <>
+  // Stable row dispatchers read the latest committed drag state, so memoized
+  // rows never retain a handler from a previous drag or destination.
+  const latest = useRef<RowActions>(null);
+  useLayoutEffect(() => {
+    latest.current = { beginDrag, endDrag, dropHandlers: rowDropHandlers, menu: entryMenuHandler,
+      open: (entry) => entry.kind === 'folder' ? props.onToggleFolder(entry.id) : props.onOpen(entry.id) };
+  });
+  const actions = useMemo<RowActions>(() => ({
+    beginDrag: (entry) => (event) => latest.current?.beginDrag(entry)(event),
+    endDrag: () => latest.current?.endDrag(),
+    dropHandlers: (entry) => latest.current?.dropHandlers(entry) ?? {},
+    menu: (entry) => latest.current?.menu(entry),
+    open: (entry) => latest.current?.open(entry),
+  }), []);
+  const identity = useMemo(() => <>
     <SidebarIcon kind="folder" />
     <span className="vault-sidebar__title">{props.name}</span>
-  </>;
+  </>, [props.name]);
 
   const rootDroppable = dragging !== null && canDropInto(dragging, '');
   const rootClass = `vault-root${rootDroppable ? ' vault-root--droppable' : ''}${dropTarget === '' ? ' vault-root--drop' : ''}`;
@@ -167,29 +268,14 @@ export function VaultSidebar(props: VaultSidebarProps) {
       const expanded = props.expandedIds.has(entry.id);
       const isFolder = entry.kind === 'folder';
       const selected = !isFolder && props.selectedId === entry.id;
-      const icon = isFolder ? (expanded ? 'openFolder' : 'folder') : entry.kind === 'canvas' ? 'canvas' : 'document';
       const dropping = dropTarget === entry.id;
       return (
         <li key={entry.id}>
-          <button
-            className={`vault-tree__row${selected ? ' vault-tree__row--selected' : ''}${
-              dragging?.path === entry.id ? ' vault-tree__row--dragging' : ''}${dropping ? ' vault-tree__row--drop' : ''}`}
-            title={entry.error ?? entry.name}
-            disabled={props.disabled || entry.unavailable}
-            aria-current={selected ? 'page' : undefined}
-            aria-expanded={isFolder ? expanded : undefined}
-            data-path={entry.id}
-            draggable={onMoveEntry !== undefined && !props.disabled && !entry.unavailable}
-            onDragStart={beginDrag(entry)}
-            onDragEnd={endDrag}
-            onClick={() => isFolder ? props.onToggleFolder(entry.id) : props.onOpen(entry.id)}
-            onContextMenu={entryMenuHandler(entry)}
-            {...(isFolder ? dropHandlers(entry.id, true) : inertDropHandlers)}
-          >
-            {isFolder ? (expanded ? <SidebarIcon kind="chevronDown" size={12} /> : <SidebarIcon kind="chevronRight" size={12} />) : <span className="vault-tree__spacer" />}
-            <SidebarIcon kind={icon} />
-            <span className="vault-tree__name">{entry.name}</span>
-          </button>
+          <VaultTreeRow entry={entry} expanded={expanded} selected={selected}
+            dragging={dragging?.path === entry.id} dropping={dropping}
+            insertion={insertion?.anchor === entry.id ? insertion.side : undefined}
+            disabled={!!(props.disabled || entry.unavailable)} draggable={onMoveEntry !== undefined && !props.disabled && !entry.unavailable}
+            actions={actions} />
           {isFolder && expanded && entry.children && <ul>{renderEntries(entry.children)}</ul>}
         </li>
       );
@@ -201,12 +287,8 @@ export function VaultSidebar(props: VaultSidebarProps) {
       <div className="vault-sidebar__heading">{props.onSelectRoot
         ? <button className={rootClass} disabled={props.disabled} onClick={props.onSelectRoot} title={`${props.name} /`} {...dropHandlers('', false)}>{identity}</button>
         : <span className={rootClass} title={props.name} {...dropHandlers('', false)}>{identity}</span>}</div>
-      <div className="vault-sidebar__actions" role="toolbar" aria-label="Vault actions">
-        <button disabled={props.disabled} title="New Document" aria-label="New Document" onClick={props.onCreateDocument}><SidebarIcon kind="newDocument" /><span>New document</span></button>
-        {props.onCreateCanvas && <button disabled={props.disabled} title="New Canvas" aria-label="New Canvas" onClick={props.onCreateCanvas}><SidebarIcon kind="canvas" /><span>New canvas</span></button>}
-        {props.onCreateFolder && <button disabled={props.disabled} title="New Folder" aria-label="New Folder" onClick={props.onCreateFolder}><SidebarIcon kind="newFolder" /><span>New folder</span></button>}
-        {props.onRefresh && <button disabled={props.disabled} title="Refresh Vault" aria-label="Refresh Vault" onClick={props.onRefresh}><SidebarIcon kind="refresh" /><span>Refresh vault</span></button>}
-      </div>
+      <VaultSidebarActions disabled={props.disabled} onCreateDocument={props.onCreateDocument}
+        onCreateCanvas={props.onCreateCanvas} onCreateFolder={props.onCreateFolder} onRefresh={props.onRefresh} />
       <div className="vault-sidebar__section" aria-hidden="true">Files</div>
       <nav ref={treeRef} className={`vault-tree${dropTarget === '' ? ' vault-tree--drop-root' : ''}`} aria-label="Documents and canvases"
         onDragOverCapture={(event) => { pointerY.current = event.clientY; }}
@@ -215,4 +297,4 @@ export function VaultSidebar(props: VaultSidebarProps) {
       </nav>
     </section>
   );
-}
+});

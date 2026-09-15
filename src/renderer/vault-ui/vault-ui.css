@@ -115,3 +115,10 @@ button.vault-root:hover:enabled { color: #fff; }
   .vault-file-header > svg { display: none; }
   .vault-document-content { padding: 20px 16px 32px; }
 }
+
+.vault-tree__row--insert-before::before, .vault-tree__row--insert-after::after {
+  content: ''; position: absolute; left: 8px; right: 4px; height: 2px;
+  background: #b7cfff; pointer-events: none; z-index: 1;
+}
+.vault-tree__row--insert-before::before { top: 0; }
+.vault-tree__row--insert-after::after { bottom: 0; }

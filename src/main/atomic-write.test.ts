@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { atomicWrite } from './atomic-write';
-import { createEmptyJsonCanvasDocument, decodeJsonCanvasDocument, encodeJsonCanvasDocument } from '../shared/json-canvas';
+import { newCanvas, decodeCanvas } from '../shared/vault-canvas';
 
 describe('atomicWrite', () => {
   let directory: string;
@@ -11,18 +11,18 @@ describe('atomicWrite', () => {
   afterEach(async () => { await fs.rm(directory, { recursive: true, force: true }); });
 
   it('creates and replaces complete files without leaving temporary files', async () => {
-    const file = path.join(directory, 'default.canvas');
+    const file = path.join(directory, 'default.yantraC');
     await atomicWrite(file, 'first');
     await atomicWrite(file, 'second');
     expect(await fs.readFile(file, 'utf8')).toBe('second');
-    expect(await fs.readdir(directory)).toEqual(['default.canvas']);
+    expect(await fs.readdir(directory)).toEqual(['default.yantraC']);
   });
 
   it('uses separate temporary files for simultaneous writes', async () => {
-    const file = path.join(directory, 'default.canvas');
+    const file = path.join(directory, 'default.yantraC');
     await Promise.all([atomicWrite(file, 'a'.repeat(10000)), atomicWrite(file, 'b'.repeat(10000))]);
     expect(['a'.repeat(10000), 'b'.repeat(10000)]).toContain(await fs.readFile(file, 'utf8'));
-    expect(await fs.readdir(directory)).toEqual(['default.canvas']);
+    expect(await fs.readdir(directory)).toEqual(['default.yantraC']);
   });
 
   it('cleans up the temporary file if replacement fails', async () => {
@@ -35,9 +35,9 @@ describe('atomicWrite', () => {
   });
 
   it('round-trips a canvas through a fresh disk read', async () => {
-    const document = createEmptyJsonCanvasDocument();
-    const file = path.join(directory, 'default.canvas');
-    await atomicWrite(file, `${JSON.stringify(encodeJsonCanvasDocument(document))}\n`);
-    expect(decodeJsonCanvasDocument(await fs.readFile(file, 'utf8'))).toEqual(document);
+    const document = newCanvas('Default');
+    const file = path.join(directory, 'default.yantraC');
+    await atomicWrite(file, `${JSON.stringify(document)}\n`);
+    expect(decodeCanvas(await fs.readFile(file, 'utf8'))).toEqual(document);
   });
 });

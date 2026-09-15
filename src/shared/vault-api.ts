@@ -1,9 +1,17 @@
+import type { EntryPlacement } from './vault-organization';
 import type { DocumentFile, VaultSnapshot } from './vault-format';
 import type { CanvasFile } from './vault-canvas';
 import type { VaultEntryChange } from './vault-organization';
-import type { OperationResult } from './operation-result';
+import type { OperationFailure, OperationResult } from './operation-result';
+
+export interface CanvasDeletionResult {
+  snapshot: VaultSnapshot;
+  canvases: CanvasFile[];
+  error?: OperationFailure;
+}
 
 export interface VaultOperations {
+  deleteCanvasNodes: (sessionId: string, canvasId: string, nodeIds: string[]) => Promise<CanvasDeletionResult>;
   refresh: (sessionId: string) => Promise<VaultSnapshot>;
   deleteEntry: (sessionId: string, path: string) => Promise<VaultSnapshot>;
   retryRecovery: (sessionId: string) => Promise<VaultSnapshot>;
@@ -18,7 +26,7 @@ export interface VaultOperations {
   createNodeDocument: (sessionId: string) => Promise<{ path: string; document: DocumentFile }>;
   createFolder: (sessionId: string, folder: string, name: string) => Promise<{ path: string }>;
   renameEntry: (sessionId: string, path: string, name: string, documentTitle?: string) => Promise<VaultEntryChange>;
-  moveEntry: (sessionId: string, path: string, folder: string) => Promise<VaultEntryChange>;
+  moveEntry: (sessionId: string, path: string, folder: string, placement?: EntryPlacement) => Promise<VaultEntryChange>;
 }
 
 // Plain results preserve error categories across both Electron IPC and contextBridge.
@@ -27,6 +35,7 @@ export type YantraVaultApi = {
 };
 
 export const VAULT_CHANNELS = {
+  DELETE_CANVAS_NODES: 'vault:delete-canvas-nodes',
   REFRESH: 'vault:refresh', DELETE_ENTRY: 'vault:delete-entry', RETRY_RECOVERY: 'vault:retry-recovery',
   RESTORE: 'vault:restore', CHOOSE: 'vault:choose',
   READ_DOCUMENT: 'vault:read-document', CREATE_DOCUMENT: 'vault:create-document', SAVE_DOCUMENT: 'vault:save-document',
