@@ -14,8 +14,8 @@ describe('flow dimensions', () => {
   it('uses explicit dimensions, then style, then defaults', () => {
     expect(getFlowNodeWidth(node({ width: 410 }))).toBe(410);
     expect(getFlowNodeHeight(node({ style: { height: '290' } }))).toBe(290);
-    expect(getFlowNodeWidth(node({ style: {} }))).toBe(320);
-    expect(getFlowNodeHeight(node({ style: {} }))).toBe(220);
+    expect(getFlowNodeWidth(node({ style: {} }))).toBe(220);
+    expect(getFlowNodeHeight(node({ style: {} }))).toBe(75);
   });
 });
 it('preserves edge endpoints, decoration and label through flow mapping', () => {

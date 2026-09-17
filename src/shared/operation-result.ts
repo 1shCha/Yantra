@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-export const operationFailureSchema = z.object({
+export const operationFailureSchema = z.strictObject({
   code: z.enum(['conflict', 'collision', 'missing', 'permission', 'invalid-input', 'unsupported-format',
     'invalid-format', 'invalid-session', 'busy', 'no-vault', 'unavailable', 'recovery-required', 'io', 'unknown']),
   message: z.string(),
   path: z.string().optional(),
   systemCode: z.string().optional(),
-}).strict();
+});
 
 export type OperationFailure = z.infer<typeof operationFailureSchema>;
 export type OperationResult<T = void> =

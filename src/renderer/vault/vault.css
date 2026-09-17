@@ -1,6 +1,6 @@
 .vault-workspace, .vault-navigation { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .vault-navigation .vault-sidebar { flex: 1; min-height: 0; height: auto; }
-.vault-workspace > .vault-document-view, .vault-workspace > .vault-empty, .vault-workspace > .vault-file-state { flex: 1; min-height: 0; height: auto; }
+.vault-pane-stack > .vault-empty, .vault-pane-stack > .vault-file-state { height: 100%; }
 .vault-session-actions { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px 10px; border-top: 1px solid #252525; }
 .vault-session-actions button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 3px 2px; background: transparent; border: 0; color: #b5b5b5; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: left; border-radius: 0; cursor: pointer; }
 .vault-session-actions button svg { flex: 0 0 auto; color: #888; }
@@ -15,7 +15,6 @@
 .vault-error button, .vault-file-state button { color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; padding: 4px 8px; }
 .vault-document-content--editable input[type='checkbox'] { pointer-events: auto; }
 .vault-document-content--editable .tiptap { min-height: 200px; outline: none; }
-.vault-workspace > .vault-canvas-view { flex: 1; min-height: 0; height: auto; }
 .vault-live-canvas { flex: 1; min-height: 0; display: flex; position: relative; }
 .vault-node-open { position: absolute; right: 10px; bottom: 10px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid #d6d6d6; border-radius: 4px; background: #fafcff; color: #666; }
 .vault-node-open:disabled { opacity: .4; }

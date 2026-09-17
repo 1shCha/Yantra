@@ -34,6 +34,7 @@ describe('vault organization and placement', () => {
       createFolder: (_session, folder, name) => repo.createFolder(folder, name),
       renameEntry: (_session, relative, name, title) => repo.renameEntry(relative, name, title),
       moveEntry: (_session, relative, folder, placement) => repo.moveEntry(relative, folder, placement),
+      moveEntries: (_session, paths, folder) => repo.moveEntries(paths, folder),
     };
     store = createVaultWorkspace(testVaultApi(api));
     await store.getState().restore();
@@ -378,17 +379,17 @@ describe('vault organization and placement', () => {
     expect(store.getState().titleErrors.has(id)).toBe(false);
   });
 
-  it('updates the editor title through sidebar rename, even when the path is unchanged', async () => {
+  it('updates the editor title without remounting, even when the path is unchanged', async () => {
     await store.getState().createDocument();
     const id = store.getState().activeDocumentId!;
     await store.getState().renameEntry('Untitled.yantraD', 'Project_2', 'Project 2');
     expect(documentTitle(store.getState().documents.get(id)!.file.doc)).toBe('Project 2');
-    expect(store.getState().documents.get(id)?.reloadRevision).toBe(1);
+    expect(store.getState().documents.get(id)?.reloadRevision).toBe(0);
     store.getState().updateDocument(id, withDocumentTitle(store.getState().documents.get(id)!.file.doc, 'Draft 3'));
     await store.getState().renameEntry('Project_2.yantraD', 'Project_2', 'Project 2');
     expect(documentTitle(store.getState().documents.get(id)!.file.doc)).toBe('Project 2');
     expect(documentTitle((await repo.readDocument('Project_2.yantraD')).doc)).toBe('Project 2');
-    expect(store.getState().documents.get(id)?.reloadRevision).toBe(2);
+    expect(store.getState().documents.get(id)?.reloadRevision).toBe(0);
   });
 
   it('waits for in-flight saves and blocks a rename when saving fails', async () => {
@@ -461,5 +462,80 @@ describe('vault organization and placement', () => {
     expect(renames).toBe(1);
     expect(store.getState().documents.get(id)?.reloadRevision).toBe(0);
     expect(store.getState().titleErrors.size).toBe(0);
+  });
+
+  describe('case-only renames on case-insensitive filesystems', () => {
+    it('renames a standalone document when only title and filename case change', async () => {
+      await store.getState().createDocument();
+      const id = store.getState().activeDocumentId!;
+      await store.getState().renameEntry('Untitled.yantraD', 'Notes', 'Notes');
+      store.getState().updateDocument(id, withDocumentTitle(store.getState().documents.get(id)!.file.doc, 'notes'));
+      expect((await store.getState().commitDocumentTitle(id)).status).toBe('success');
+      expect(store.getState().titleErrors.has(id)).toBe(false);
+      expect(store.getState().documents.get(id)?.path).toBe('notes.yantraD');
+      expect(documentTitle(store.getState().documents.get(id)!.file.doc)).toBe('notes');
+      const onDisk = await repo.readDocument('notes.yantraD');
+      expect(onDisk.title).toBe('notes');
+      expect(documentTitle(onDisk.doc)).toBe('notes');
+    });
+
+    it('renames a canvas node document when only title case changes', async () => {
+      await store.getState().createCanvas();
+      const canvasId = store.getState().activeCanvasId!;
+      await store.getState().createCanvasNode(canvasId, { x: 100, y: 100 });
+      const node = store.getState().canvases.get(canvasId)!.file.nodes[0]!;
+      const documentId = node.documentId;
+      store.getState().updateDocument(documentId, withDocumentTitle(store.getState().documents.get(documentId)!.file.doc, 'Node Title'));
+      expect((await store.getState().commitDocumentTitle(documentId)).status).toBe('success');
+      store.getState().updateDocument(documentId, withDocumentTitle(store.getState().documents.get(documentId)!.file.doc, 'node title'));
+      expect((await store.getState().commitDocumentTitle(documentId)).status).toBe('success');
+      expect(store.getState().titleErrors.has(documentId)).toBe(false);
+      expect(store.getState().documents.get(documentId)?.path).toBe('Unfiled/node_title.yantraD');
+      expect(documentTitle((await repo.readDocument('Unfiled/node_title.yantraD')).doc)).toBe('node title');
+    });
+
+    it('renames a canvas file when only filename case changes', async () => {
+      await store.getState().createCanvas();
+      const canvasId = store.getState().activeCanvasId!;
+      const path = store.getState().canvases.get(canvasId)!.path;
+      expect((await store.getState().renameEntry(path, 'Map')).status).toBe('success');
+      expect((await store.getState().renameEntry('Map.yantraC', 'map')).status).toBe('success');
+      expect(store.getState().canvases.get(canvasId)?.path).toBe('map.yantraC');
+      expect((await repo.readCanvas('map.yantraC')).title).toBe('map');
+    });
+
+    it('renames a folder when only folder name case changes', async () => {
+      await store.getState().createFolder('', 'Archive');
+      expect((await store.getState().renameEntry('Archive', 'archive')).status).toBe('success');
+      expect(store.getState().vault?.entries.some((entry) => entry.path === 'archive' && entry.kind === 'folder')).toBe(true);
+      await expect(fs.stat(path.join(root, 'archive'))).resolves.toBeDefined();
+    });
+
+    it('still rejects renaming onto a different sibling name', async () => {
+      const first = await repo.createDocument('');
+      const second = await repo.createDocument('');
+      const before = await fs.readFile(path.join(root, second.path), 'utf8');
+      await expect(repo.renameEntry(first.path, second.document.title)).rejects.toThrow();
+      expect(await fs.readFile(path.join(root, second.path), 'utf8')).toBe(before);
+      expect(await repo.readDocument(first.path)).toEqual(first.document);
+    });
+  });
+
+  it('batch moves mixed files and folders and rejects nested destinations and name collisions', async () => {
+    await store.getState().createFolder('', 'Research');
+    await store.getState().createDocument('');
+    const documentPath = store.getState().activePath!;
+    await store.getState().createCanvas('');
+    const canvasPath = store.getState().activePath!;
+    await store.getState().createFolder('', 'Archive');
+    expect((await store.getState().moveEntries([documentPath, canvasPath], 'Research')).status).toBe('success');
+    expect(store.getState().vault?.entries.find((entry) => entry.path === 'Research')?.children?.map((entry) => entry.path).sort())
+      .toEqual(['Research/Untitled.yantraC', 'Research/Untitled.yantraD'].sort());
+    await store.getState().createFolder('Research', 'Notes');
+    expect((await store.getState().moveEntries(['Research'], 'Research/Notes')).status).toBe('failure');
+    await repo.createDocument('Archive');
+    await repo.renameEntry('Archive/Untitled.yantraD', 'Notes');
+    await repo.createDocument('Archive');
+    await expect(repo.moveEntries(['Archive/Notes.yantraD', 'Archive/Untitled.yantraD'], 'Research')).rejects.toThrow();
   });
 });

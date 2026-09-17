@@ -12,7 +12,6 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 
-import { REACT_FLOW_TEXT_NODE_TYPE } from './react-flow-mapping';
 import { getStackingZIndices } from '../../shared/stacking-order';
 import { presentFlowNodes } from './flow-node-presentation';
 import { useCanvasStoreApi, useCanvasState as useCanvasStore } from './canvas-store-context';
@@ -31,7 +30,6 @@ import {
 } from './canvas-alignment-context';
 import { CanvasEditorProvider } from './canvas-editor-context';
 import { GroupOutlines } from './GroupOutlines';
-import { MarkdownNode } from './MarkdownNode';
 import {
   MARKDOWN_NODE_MIN_HEIGHT,
   MARKDOWN_NODE_MIN_WIDTH,
@@ -68,10 +66,12 @@ function toAlignmentViewport(
 }
 
 interface CanvasSurfaceProps {
-  nodeTypes?: NodeTypes;
-  allowRemoval?: boolean;
-  defaultViewport?: Viewport;
-  onViewportChange?: (viewport: Viewport) => void;
+  active: boolean;
+  flowId: string;
+  nodeTypes: NodeTypes;
+  defaultViewport: Viewport;
+  onViewportChange: (viewport: Viewport) => void;
+  onViewportChangeEnd: (viewport: Viewport) => void;
 }
 
 interface GroupDragState {
@@ -81,7 +81,7 @@ interface GroupDragState {
   pointerId: number;
 }
 
-export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = true, defaultViewport, onViewportChange }: CanvasSurfaceProps) {
+export function CanvasSurface({ active, flowId, nodeTypes, defaultViewport, onViewportChange, onViewportChangeEnd }: CanvasSurfaceProps) {
   const flowApi = useCanvasStoreApi();
   const canvasRef = useRef<HTMLElement>(null);
   const groupDragStateRef = useRef<GroupDragState | null>(null);
@@ -111,8 +111,9 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
   const resizeStartBoundsRef = useRef<{ bounds: NodeGeometry; nodeId: string } | null>(null);
 
   useEffect(() => {
+    if (!active) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.key === 'Backspace' || event.key === 'Delete') && allowRemoval) {
+      if (event.key === 'Backspace' || event.key === 'Delete') {
         if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
         if (!isElementTarget(event.target) || !canvasRef.current?.contains(event.target)) return;
         if (event.target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')) return;
@@ -131,14 +132,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [allowRemoval, flowApi]);
-
-  const nodeTypes = useMemo(
-    () => ({
-      [REACT_FLOW_TEXT_NODE_TYPE]: MarkdownNode,
-    }),
-    [],
-  );
+  }, [active, flowApi]);
 
   const handleCanvasDoubleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -401,7 +395,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
           <CanvasAlignmentProvider value={alignmentContextValue}>
         {editingNodeId === null ? (
           <SelectionToolbar
-            allowRemoval={allowRemoval}
+            allowRemoval
             canGroupSelectedNodes={canGroupSelectedNodes}
             isGroupSelected={selectedGroupId !== null}
             selectedNodeCount={selectedNodeIds.length}
@@ -412,11 +406,12 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
           />
         ) : null}
         <ReactFlow
+          id={flowId}
           // Keep the live editor mounted when panning away, preserving focus and undo history.
           onlyRenderVisibleElements={editingNodeId === null}
           nodes={nodesWithInteractionState}
           edges={edges}
-          nodeTypes={suppliedNodeTypes ?? nodeTypes}
+          nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeDoubleClick={handleNodeDoubleClick}
@@ -425,9 +420,9 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
           onNodeDragStop={handleNodeDragStop}
           onPaneClick={handlePaneClick}
           onDoubleClick={handleCanvasDoubleClick}
-          fitView={!defaultViewport}
           defaultViewport={defaultViewport}
-          onMove={(_event, viewport) => onViewportChange?.(viewport)}
+          onMove={(_event, viewport) => onViewportChange(viewport)}
+          onMoveEnd={(_event, viewport) => onViewportChangeEnd(viewport)}
           deleteKeyCode={null}
           minZoom={0.1}
           maxZoom={4}
@@ -445,6 +440,7 @@ export function CanvasSurface({ nodeTypes: suppliedNodeTypes, allowRemoval = tru
           zIndexMode="manual"
         >
           <Background
+            id={flowId}
             variant={BackgroundVariant.Lines}
             gap={32}
             size={1}

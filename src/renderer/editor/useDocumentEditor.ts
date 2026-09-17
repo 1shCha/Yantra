@@ -32,6 +32,8 @@ export function useDocumentEditor({
   const editorRef = useRef<Editor | null>(null);
   const [titleError, setTitleError] = useState<string | null>(null);
   const titleCommit = useTitleCommit(initialContent, onTitleCommit, setTitleError);
+  const syncEditableRef = useRef(titleCommit.syncEditable);
+  syncEditableRef.current = titleCommit.syncEditable;
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [Markdown, Clipboard, ...documentEditorExtensions.map((extension) => extension.name === 'inlineMath' || extension.name === 'blockMath'
@@ -56,7 +58,7 @@ export function useDocumentEditor({
     },
   });
   useLayoutEffect(() => {
-    titleCommit.syncEditable(editor, editable);
+    syncEditableRef.current(editor, editable);
   }, [editor, editable, titleCommit.committing]);
   return { editor, titleError };
 }

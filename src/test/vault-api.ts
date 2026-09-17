@@ -25,5 +25,6 @@ export function testVaultApi(api: VaultOperations): YantraVaultApi {
     createFolder: (session, folder, name) => captureOperation(() => api.createFolder(session, folder, name)),
     renameEntry: (session, path, name, title) => captureOperation(() => api.renameEntry(session, path, name, title)),
     moveEntry: (session, path, folder, placement) => captureOperation(() => api.moveEntry(session, path, folder, placement)),
+    moveEntries: (session, paths, folder) => captureOperation(() => api.moveEntries(session, paths, folder)),
   };
 }

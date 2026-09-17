@@ -37,6 +37,8 @@ export function createVaultCanvasSession(workspace: ReturnType<typeof createVaul
   let lastFile = initial.file;
   let synchronizing = false;
   let publishing = false;
+  let pendingViewport: CanvasPresentation['viewport'] | null = null;
+  let viewportTimer: ReturnType<typeof setTimeout> | null = null;
   const flow = createCanvasStore({
     onDeleteNodes: (nodeIds) => { void workspace.getState().deleteCanvasNodes(canvasId, nodeIds); },
     onCreateNode: (position) => { void workspace.getState().createCanvasNode(canvasId, position); },
@@ -47,6 +49,15 @@ export function createVaultCanvasSession(workspace: ReturnType<typeof createVaul
     },
   });
   flow.setState({ nodes: nodesFromFile(lastFile), edges: edgesFromFile(lastFile), groups: lastFile.groups, layerOrder: lastFile.layerOrder });
+
+  function flushViewport() {
+    if (viewportTimer !== null) clearTimeout(viewportTimer);
+    viewportTimer = null;
+    const viewport = pendingViewport;
+    pendingViewport = null;
+    if (!viewport || !workspace.getState().canvases.has(canvasId)) return;
+    workspace.getState().updateCanvasViewport(canvasId, viewport);
+  }
 
   function publish(viewport = lastFile.viewport) {
     if (synchronizing || workspace.getState().busy || workspace.getState().deletingCanvasId === canvasId) return;
@@ -74,14 +85,26 @@ export function createVaultCanvasSession(workspace: ReturnType<typeof createVaul
     const previousIds = new Set(flow.getState().nodes.map((node) => node.id));
     const previousFile = lastFile;
     lastFile = loaded.file;
+    if (lastFile.nodes === previousFile.nodes && lastFile.edges === previousFile.edges
+      && lastFile.groups === previousFile.groups && lastFile.layerOrder === previousFile.layerOrder) return;
     synchronizing = true;
     try {
       const added = lastFile.nodes.find((node) => !previousIds.has(node.id));
       const current = flow.getState();
       let nodes = nodesFromFile(lastFile, current.nodes);
-      const selectAdded = added && workspace.getState().activeCanvasId === canvasId;
-      if (selectAdded) nodes = nodes.map((node) => Boolean(node.selected) === (node.id === added.id)
-        ? node : { ...node, selected: node.id === added.id });
+      const workspaceState = workspace.getState();
+      const selectAdded = added && workspaceState.activeCanvasId === canvasId;
+      const blankEditTarget = workspaceState.blankNodeEditTarget;
+      const shouldAutoEdit = Boolean(
+        selectAdded
+          && added
+          && blankEditTarget?.canvasId === canvasId
+          && blankEditTarget.nodeId === added.id,
+      );
+      if (selectAdded && added) {
+        nodes = nodes.map((node) => Boolean(node.selected) === (node.id === added.id)
+          ? node : { ...node, selected: node.id === added.id });
+      }
       const update: Partial<ReturnType<typeof flow.getState>> = {
         nodes: nodes.length === current.nodes.length && nodes.every((node, index) => node === current.nodes[index]) ? current.nodes : nodes,
         edges: lastFile.edges === previousFile.edges ? current.edges : edgesFromFile(lastFile),
@@ -93,7 +116,16 @@ export function createVaultCanvasSession(workspace: ReturnType<typeof createVaul
         editingNodeId: availableIds.has(current.editingNodeId ?? '') ? current.editingNodeId : null,
         selectedGroupId: lastFile.groups.some((group) => group.id === current.selectedGroupId) ? current.selectedGroupId : null,
       });
-      if (selectAdded) Object.assign(update, { selectedNodeIds: [added.id], selectedGroupId: null, editingNodeId: null });
+      if (selectAdded && added) {
+        Object.assign(update, {
+          selectedNodeIds: [added.id],
+          selectedGroupId: null,
+          editingNodeId: shouldAutoEdit ? added.id : null,
+        });
+      }
+      if (blankEditTarget?.canvasId === canvasId && added && blankEditTarget.nodeId === added.id) {
+        workspace.setState({ blankNodeEditTarget: null });
+      }
       flow.setState(update);
     } finally { synchronizing = false; }
   }
@@ -101,15 +133,27 @@ export function createVaultCanvasSession(workspace: ReturnType<typeof createVaul
   return {
     flow,
     defaultViewport: initial.file.viewport,
-    setViewport: (viewport: CanvasPresentation['viewport']) => publish(viewport),
+    setViewport(viewport: CanvasPresentation['viewport']) {
+      if (workspace.getState().busy) return;
+      pendingViewport = viewport;
+      if (viewportTimer === null) viewportTimer = setTimeout(flushViewport, 100);
+    },
+    finishViewportMove(viewport: CanvasPresentation['viewport']) {
+      if (!workspace.getState().busy) pendingViewport = viewport;
+      flushViewport();
+    },
     connect() {
       synchronize();
+      const unregisterViewportFlush = workspace.getState().registerViewportFlush(flushViewport);
       const stopWorkspace = workspace.subscribe(synchronize);
       const stopFlow = flow.subscribe((state, previous) => {
         if (state.nodes !== previous.nodes || state.edges !== previous.edges
-          || state.groups !== previous.groups || state.layerOrder !== previous.layerOrder) publish();
+          || state.groups !== previous.groups || state.layerOrder !== previous.layerOrder) {
+          flushViewport();
+          publish();
+        }
       });
-      return () => { stopWorkspace(); stopFlow(); };
+      return () => { flushViewport(); unregisterViewportFlush(); stopWorkspace(); stopFlow(); };
     },
   };
 }

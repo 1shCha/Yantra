@@ -10,23 +10,26 @@ export const canvasNodeSchema = z.strictObject({
   color: z.string().optional(),
 });
 
+export const canvasViewportSchema = z.strictObject({ x: z.number(), y: z.number(), zoom: z.number().min(0.1).max(4) });
+
 const presentationFields = {
   nodes: z.array(canvasNodeSchema),
   edges: z.array(canvasEdgeSchema.strict()),
   groups: z.array(canvasGroupSchema.strict()),
   layerOrder: z.array(z.string()),
-  viewport: z.strictObject({ x: z.number(), y: z.number(), zoom: z.number().min(0.1).max(4) }),
+  viewport: canvasViewportSchema,
 };
 
 export const canvasPresentationSchema = z.strictObject(presentationFields).superRefine((canvas, context) => {
   const nodes = new Set(canvas.nodes.map((node) => node.id));
   const documents = new Set(canvas.nodes.map((node) => node.documentId));
   const groups = new Set(canvas.groups.map((group) => group.id));
-  const members = canvas.groups.flatMap((group) => group.nodeIds);
-  const units = new Set([...nodes].filter((id) => !members.includes(id)).concat([...groups]));
+  const memberIds = canvas.groups.flatMap((group) => group.nodeIds);
+  const groupedNodeIds = new Set(memberIds);
+  const units = new Set([...nodes].filter((id) => !groupedNodeIds.has(id)).concat([...groups]));
   if (nodes.size !== canvas.nodes.length || documents.size !== canvas.nodes.length || groups.size !== canvas.groups.length
-    || [...groups].some((id) => nodes.has(id)) || new Set(members).size !== members.length
-    || members.some((id) => !nodes.has(id))
+    || [...groups].some((id) => nodes.has(id)) || groupedNodeIds.size !== memberIds.length
+    || memberIds.some((id) => !nodes.has(id))
     || new Set(canvas.edges.map((edge) => edge.id)).size !== canvas.edges.length
     || canvas.edges.some((edge) => !nodes.has(edge.fromNode) || !nodes.has(edge.toNode))
     || canvas.layerOrder.length !== units.size || new Set(canvas.layerOrder).size !== units.size

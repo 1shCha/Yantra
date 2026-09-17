@@ -45,6 +45,7 @@ describe('vault lifecycle', () => {
       saveCanvas: (_session, file, overwrite) => repo.saveCanvas(file, overwrite), createNodeDocument: () => repo.createNodeDocument(),
       createFolder: (_session, folder, name) => repo.createFolder(folder, name),
       renameEntry: (_session, relative, name, title) => repo.renameEntry(relative, name, title), moveEntry: (_session, relative, folder) => repo.moveEntry(relative, folder),
+      moveEntries: (_session, paths, folder) => repo.moveEntries(paths, folder),
     };
     store = createVaultWorkspace(testVaultApi(api));
     await store.getState().restore();

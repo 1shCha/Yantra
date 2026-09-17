@@ -17,6 +17,7 @@ import { SidebarIcon } from '../vault-ui/SidebarIcon';
 
 interface WorkspaceFrameProps {
   children: ReactNode;
+  tabs?: ReactNode;
   sidebar?: ReactNode;
   rightSidebar?: ReactNode;
   frameRef?: Ref<HTMLElement>;
@@ -54,7 +55,7 @@ interface SidebarDrag {
   startWidth: number;
 }
 
-export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defaultSidebarOpen = false }: WorkspaceFrameProps) {
+export function WorkspaceFrame({ children, tabs, sidebar, rightSidebar, frameRef, defaultSidebarOpen = false }: WorkspaceFrameProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isBrandSidebarOpen, setIsBrandSidebarOpen] = useState(defaultSidebarOpen);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false);
@@ -192,7 +193,7 @@ export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defa
   return (
     <main
       ref={frameRef}
-      className={`app-shell${isFullscreen ? ' app-shell--fullscreen' : ''}${
+      className={`app-shell${tabs ? ' app-shell--tabs' : ''}${isFullscreen ? ' app-shell--fullscreen' : ''}${
         isBrandSidebarOpen ? ' app-shell--sidebar-open' : ''
       }${
         isRightSidebarOpen ? ' app-shell--right-sidebar-open' : ''
@@ -224,6 +225,7 @@ export function WorkspaceFrame({ children, sidebar, rightSidebar, frameRef, defa
         {rightSidebar}
       </aside>
       {rightToggle}
+      {tabs && <div className="app-shell__tabs">{tabs}</div>}
       <div className="app-shell__surface">
         {children}
       </div>

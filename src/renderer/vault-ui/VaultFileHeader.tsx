@@ -1,9 +1,11 @@
+import type { OperationResult } from '../../shared/operation-result';
+import { VaultHeaderName } from './VaultHeaderName';
 import type { ReactNode } from 'react';
 import { Check, Circle, LoaderCircle, AlertCircle, RotateCw, LocateFixed, PanelsTopLeft, FileText } from 'lucide-react';
 
 export type VaultSaveState = 'Unsaved' | 'Saving' | 'Saved' | 'Failed';
 
-export function VaultFileHeader({ title, kind, children, canReveal = false, saveState = 'Saved', onRetry, showReveal = true, busy = false }: {
+export function VaultFileHeader({ title, kind, children, canReveal = false, saveState = 'Saved', onRetry, onRename, editName = title, validateName, showReveal = true, busy = false }: {
   title: string;
   folder?: string;
   children?: ReactNode;
@@ -11,6 +13,9 @@ export function VaultFileHeader({ title, kind, children, canReveal = false, save
   canReveal?: boolean;
   saveState?: VaultSaveState;
   onRetry?: () => void;
+  onRename?: (name: string) => Promise<OperationResult>;
+  editName?: string;
+  validateName?: (name: string) => string | null;
   showReveal?: boolean;
   busy?: boolean;
 }) {
@@ -20,7 +25,7 @@ export function VaultFileHeader({ title, kind, children, canReveal = false, save
     <header className="vault-file-header">
       <Icon size={17} aria-hidden="true" />
       <div className="vault-file-header__identity">
-        <h1 title={title}>{title}</h1>
+        {onRename && validateName ? <VaultHeaderName title={title} editName={editName} kind={kind} busy={busy} onRename={onRename} validateName={validateName} /> : <h1 title={title}>{title}</h1>}
       </div>
       <span className="vault-file-header__saved" role="status" aria-label={saveState} title={saveState} data-state={saveState}><StatusIcon size={13} /><span>{saveState}</span></span>
       {saveState === 'Failed' && <button disabled={busy} className="vault-file-header__action" aria-label="Retry save" title="Retry save" onClick={onRetry}><RotateCw size={15} /></button>}

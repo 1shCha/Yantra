@@ -1,3 +1,4 @@
+import { rejectNestedBatchDestination } from '../../shared/vault-batch-move';
 import { FILE_EXTENSIONS, parentFolderOf, entryBaseName } from '../../shared/vault-paths';
 export { FILE_EXTENSIONS, parentFolderOf, entryBaseName, entryTitle } from '../../shared/vault-paths';
 import type { VaultEntry } from '../../shared/vault-format';
@@ -35,6 +36,13 @@ export function canDropInto(source: { path: string; kind: VaultEntryKind }, fold
   if (folder === parentFolderOf(source.path)) return false;
   if (source.kind !== 'folder') return true;
   return folder !== source.path && !folder.startsWith(`${source.path}/`);
+}
+
+export function canDropGroup(sources: readonly { path: string; kind: VaultEntryKind }[], folder: string): boolean {
+  if (rejectNestedBatchDestination(sources.map((source) => source.path), folder)) return false;
+  const needsMove = sources.filter((source) => parentFolderOf(source.path) !== folder);
+  if (!needsMove.length) return false;
+  return needsMove.every((source) => canDropInto(source, folder));
 }
 
 export function movedPath(path: string, folder: string): string {

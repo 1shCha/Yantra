@@ -309,8 +309,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
       className="editor-toolbar nodrag nopan nowheel"
       data-menu-side={menuSide}
       aria-label="Text formatting"
-      onClickCapture={readOnly ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
-      onChangeCapture={readOnly ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
+      inert={readOnly}
       onMouseDown={preventToolbarMouseDown}
       onPointerDown={stopToolbarPropagation}
       onDoubleClick={stopToolbarPropagation}
@@ -352,7 +351,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
 
       <fieldset className="editor-toolbar__formatting" disabled={readOnly || state.titleLocked}
         aria-label="Formatting options" title={state.titleLocked ? TITLE_FORMAT_HINT : undefined}>
-      <span className="editor-toolbar__divider" role="separator" />
+      <hr className="editor-toolbar__divider" />
 
       <span className="editor-toolbar__control">
         <button
@@ -381,8 +380,8 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
                   key={option.label}
                   className="editor-toolbar__menu-item"
                   type="button"
-                  role="menuitem"
-                  aria-pressed={isActive}
+                  role="menuitemradio"
+                  aria-checked={isActive}
                   onClick={() => {
                     applyHeading(editor, option.level);
                     setOpenMenu(null);
@@ -443,7 +442,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
         </svg>
       </ToolbarButton>
 
-      <span className="editor-toolbar__divider" role="separator" />
+      <hr className="editor-toolbar__divider" />
 
       <ToolbarButton
         label={state.isCode ? 'Convert to equation' : 'Insert equation'}
@@ -484,7 +483,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
         </select>
       ) : null}
 
-      <span className="editor-toolbar__divider" role="separator" />
+      <hr className="editor-toolbar__divider" />
 
       <ToolbarButton
         label="Bold"
@@ -596,7 +595,7 @@ export function EditorToolbarControls({ editor, menuSide, readOnly = false, inli
         ) : null}
       </span>
 
-      <span className="editor-toolbar__divider" role="separator" />
+      <hr className="editor-toolbar__divider" />
 
       <ToolbarButton
         label="Align left"

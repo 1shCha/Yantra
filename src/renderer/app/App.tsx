@@ -1,5 +1,9 @@
 import { lazy, Suspense } from 'react';
 import './install-vault-diagnostics';
+import { installUiActionListener } from './ui-action-listener';
+
+installUiActionListener();
+import.meta.hot?.dispose(() => window.yantraUiDebug?.dispose?.());
 
 import { VaultApp } from '../vault/VaultApp';
 

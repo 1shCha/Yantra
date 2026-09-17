@@ -1,10 +1,16 @@
 import { useShallow } from 'zustand/react/shallow';
 import { FilePlus2, FolderInput, FolderPlus, PanelsTopLeft, Pencil, Trash2 } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { normalizeBatchMoveSources, pruneSelectedPaths, remapSelectedPaths } from '../../shared/vault-batch-move';
+import {
+  applySelectionGesture,
+  collectVisibleSidebarRows,
+  selectableVisiblePaths,
+} from './sidebar-selection';
 import { useStore } from 'zustand';
 import type { VaultEntry } from '../../shared/vault-format';
 import { orderEntries, type EntryPlacement, relocatedPath } from '../../shared/vault-organization';
-import type { OperationResult } from '../../shared/operation-result';
+import { cancelled, type OperationResult } from '../../shared/operation-result';
 import { createVaultWorkspace } from '../stores/vaultWorkspace';
 import { SidebarIcon } from '../vault-ui/SidebarIcon';
 import { VaultSidebar, type VaultTreeEntry } from '../vault-ui/VaultSidebar';
@@ -32,7 +38,7 @@ function treeEntries(entries: VaultEntry[]): VaultTreeEntry[] {
   return entries.map((entry) => {
     const cached = treeEntryCache.get(entry);
     if (cached) return cached;
-    const row = { id: entry.path, name: entry.name, kind: entry.kind, error: entry.error,
+    const row = { id: entry.path, resourceId: entry.error ? undefined : entry.documentId ?? entry.canvasId, name: entry.name, kind: entry.kind, error: entry.error,
       children: entry.children && treeEntries(entry.children) };
     treeEntryCache.set(entry, row);
     return row;
@@ -49,17 +55,50 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
   const state = useStore(store, useShallow((current) => ({
     vault: current.vault, busy: current.busy, activePath: current.activePath,
     createDocument: current.createDocument, createCanvas: current.createCanvas, openDocument: current.openDocument, openCanvas: current.openCanvas,
-    moveEntry: current.moveEntry, renameEntry: current.renameEntry, createFolder: current.createFolder, choose: current.choose, deleteEntry: current.deleteEntry, retryRecovery: current.retryRecovery,
+    moveEntry: current.moveEntry, moveEntries: current.moveEntries, renameEntry: current.renameEntry, createFolder: current.createFolder, choose: current.choose, deleteEntry: current.deleteEntry, retryRecovery: current.retryRecovery,
   })));
+  const [selection, setSelection] = useState<{ session: string; paths: ReadonlySet<string>; anchor: string | null }>({ session: '', paths: new Set(), anchor: null });
+  const navRef = useRef<HTMLDivElement>(null);
   const [focusDocumentId, setFocusDocumentId] = useState<string | null>(null);
   const [destination, setDestination] = useState<{ session: string; folder: string; expanded: ReadonlySet<string> }>({ session: '', folder: '', expanded: emptyExpanded });
   const [dialog, setDialog] = useState<OrganizeDialog | null>(null);
+  const renameFile = useCallback((id: string, kind: 'document' | 'canvas', name: string): Promise<OperationResult> => {
+    const current = store.getState();
+    const file = kind === 'document' ? current.documents.get(id) : current.canvases.get(id);
+    if (!file) return Promise.resolve(cancelled('not-applicable'));
+    return current.renameEntry(file.path, kind === 'document' ? titleFilename(name) : name, kind === 'document' ? name : undefined);
+  }, [store]);
   const [menu, setMenu] = useState<{ path: string; entryKind: VaultEntryKind; x: number; y: number } | null>(null);
   const [highlight, setHighlight] = useState<{ session: string; path: string } | null>(null);
   const session = state.vault?.sessionId ?? '';
   const folder = destination.session === session ? destination.folder : '';
   const expanded = destination.session === session ? destination.expanded : emptyExpanded;
   const entries = useMemo(() => treeEntries(orderEntries(state.vault?.entries ?? [], state.vault?.metadata.sidebarOrder)), [state.vault?.entries, state.vault?.metadata.sidebarOrder]);
+  const visibleRows = useMemo(() => collectVisibleSidebarRows(entries, expanded), [entries, expanded]);
+  const visibleSelectable = useMemo(() => new Set(selectableVisiblePaths(visibleRows)), [visibleRows]);
+  const selectedPaths = useMemo(() => {
+    if (selection.session !== session) return new Set<string>();
+    return pruneSelectedPaths(selection.paths, visibleSelectable);
+  }, [session, selection.session, selection.paths, visibleSelectable]);
+  const selectionAnchor = useMemo(() => {
+    if (selection.session !== session) return null;
+    if (selection.anchor && selectedPaths.has(selection.anchor)) return selection.anchor;
+    return selectedPaths.values().next().value ?? null;
+  }, [session, selection.session, selection.anchor, selectedPaths]);
+
+  const clearSelection = useCallback(() => {
+    setSelection({ session, paths: new Set(), anchor: null });
+  }, [session]);
+
+  useEffect(() => {
+    const node = navRef.current;
+    if (!node) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') clearSelection();
+    };
+    node.addEventListener('keydown', onKeyDown);
+    return () => node.removeEventListener('keydown', onKeyDown);
+  }, [clearSelection]);
   const highlightPath = highlight?.session === session ? highlight.path : undefined;
   const highlightedFile = highlightPath && state.vault && findVaultEntry(state.vault.entries, highlightPath)?.kind !== 'folder'
     ? highlightPath : undefined;
@@ -73,7 +112,7 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
         ? current : { session, folder: target, expanded };
     });
   }, [session]);
-  const createDocument = useCallback((target: string) => {
+  const createDocument = useCallback((target = folder) => {
     const previouslyActive = store.getState().activeDocumentId;
     prepareDestination(target);
     void state.createDocument(target).then((result) => {
@@ -82,12 +121,15 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
         setFocusDocumentId(current.activeDocumentId);
       }
     });
-  }, [session, prepareDestination, state.createDocument, store]);
+  }, [session, folder, prepareDestination, state.createDocument, store]);
 
-  const createCanvas = useCallback((target: string) => {
+  const createCanvas = useCallback((target = folder) => {
     prepareDestination(target);
     void state.createCanvas(target);
-  }, [prepareDestination, state.createCanvas]);
+  }, [folder, prepareDestination, state.createCanvas]);
+
+  const createDocumentAtRoot = useCallback(() => createDocument(''), [createDocument]);
+  const createCanvasAtRoot = useCallback(() => createCanvas(''), [createCanvas]);
 
   const openFile = useCallback((path: string) => {
     if (path.endsWith('.yantraC')) void state.openCanvas(path);
@@ -112,6 +154,42 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
     return result;
   }
 
+  const remapSelectionAfterChanges = useCallback((changes: readonly { from: string; to: string }[]) => {
+    if (!changes.length) return;
+    setSelection((current) => {
+      if (current.session !== session) return current;
+      let anchor = current.anchor;
+      for (const change of changes) {
+        if (anchor) anchor = relocatedPath(anchor, change.from, change.to);
+      }
+      return { session, paths: remapSelectedPaths(current.paths, changes), anchor };
+    });
+  }, [session]);
+
+  const syncSelectionToVault = useCallback((paths: readonly string[], target: string) => {
+    const vaultEntries = store.getState().vault?.entries;
+    if (!vaultEntries) return;
+    setSelection((current) => {
+      if (current.session !== session) return current;
+      const next = new Set<string>();
+      for (const path of current.paths) {
+        const candidate = parentFolderOf(path) === target ? path : movedPath(path, target);
+        if (findVaultEntry(vaultEntries, candidate)) next.add(candidate);
+        else if (findVaultEntry(vaultEntries, path)) next.add(path);
+      }
+      for (const path of paths) {
+        const candidate = parentFolderOf(path) === target ? path : movedPath(path, target);
+        if (findVaultEntry(vaultEntries, candidate)) next.add(candidate);
+      }
+      const anchor = current.anchor && next.has(current.anchor)
+        ? current.anchor
+        : current.anchor && findVaultEntry(vaultEntries, relocatedPath(current.anchor, paths[0] ?? '', movedPath(paths[0] ?? '', target)))
+          ? relocatedPath(current.anchor, paths[0] ?? '', movedPath(paths[0] ?? '', target))
+          : next.values().next().value ?? null;
+      return { session, paths: next, anchor };
+    });
+  }, [session, store]);
+
   const moveByDrag = useCallback((path: string, target: string, placement?: EntryPlacement) => {
     if (placement) {
       void state.moveEntry(path, target, placement);
@@ -119,9 +197,24 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
     }
     setHighlight(null);
     void state.moveEntry(path, target, placement).then((result) => {
-      if (result.status === 'success') revealOrganized(path, movedPath(path, target), target);
+      if (result.status === 'success') {
+        revealOrganized(path, movedPath(path, target), target);
+        remapSelectionAfterChanges([{ from: path, to: movedPath(path, target) }]);
+        setDestination((current) => current.session === session
+          ? { ...current, expanded: expandedWithAncestors(current.expanded, target) } : current);
+      }
     });
-  }, [state.moveEntry, revealOrganized]);
+  }, [state.moveEntry, revealOrganized, remapSelectionAfterChanges, session]);
+
+  const moveGroupByDrag = useCallback((paths: string[], target: string) => {
+    setHighlight(null);
+    const normalized = normalizeBatchMoveSources(paths, store.getState().vault?.metadata.sidebarOrder ?? []);
+    void state.moveEntries(normalized, target).then((result) => {
+      if (result.status === 'cancelled' || result.status === 'recovery-required') return;
+      syncSelectionToVault(normalized, target);
+      setDestination({ session, folder: target, expanded: expandedWithAncestors(expanded, target) });
+    });
+  }, [state.moveEntries, store, session, expanded, syncSelectionToVault]);
 
   function afterDeletion(path: string) {
     const removed = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
@@ -149,10 +242,52 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
     setHighlight(null);
     setDestination({ session, folder: '', expanded });
   }, [session, expanded]);
-  const openEntry = useCallback((path: string) => {
+
+  const selectSidebarEntry = useCallback((entry: VaultTreeEntry, event: MouseEvent<HTMLButtonElement>) => {
+    const next = applySelectionGesture(selectedPaths, selectionAnchor, {
+      path: entry.id,
+      additive: event.metaKey || event.ctrlKey,
+      range: event.shiftKey,
+    }, visibleRows);
+    setSelection({ session, paths: next.paths, anchor: next.anchor });
+  }, [selectedPaths, selectionAnchor, visibleRows, session]);
+
+  const prepareDrag = useCallback((entry: VaultTreeEntry) => {
+    const kind = entry.kind;
+    if (selectedPaths.has(entry.id) && selectedPaths.size > 1) {
+      return {
+        group: true,
+        sources: [...selectedPaths].map((path) => {
+          const found = findVaultEntry(state.vault?.entries ?? [], path);
+          // SAFETY: Tree entries always use a known sidebar kind; fall back to the grabbed row when pruning races the vault scan.
+          const resolvedKind: VaultEntryKind = found?.kind ?? kind;
+          return { path, kind: resolvedKind };
+        }),
+      };
+    }
+    if (!selectedPaths.has(entry.id)) {
+      setSelection({ session, paths: new Set([entry.id]), anchor: entry.id });
+    }
+    return { group: false, sources: [{ path: entry.id, kind }] };
+  }, [selectedPaths, session, state.vault]);
+  const clickGesture = useRef<{ session: string; path: string; target?: string; provisional?: string } | null>(null);
+  const openEntry = useCallback((path: string, count = 0) => {
+    const before = store.getState();
+    const target = before.activeTabId ?? undefined;
+    const existing = before.tabs.find((tab) => tab.path === path);
     selectRoot();
     openFile(path);
-  }, [selectRoot, openFile]);
+    clickGesture.current = count === 1 ? { session, path, target,
+      provisional: existing ? undefined : store.getState().activeTabId ?? undefined } : null;
+  }, [selectRoot, openFile, session, store]);
+  const replaceEntry = useCallback((path: string) => {
+    const gesture = clickGesture.current;
+    clickGesture.current = null;
+    if (!gesture || gesture.session !== session || gesture.path !== path || !gesture.provisional) return;
+    const options = { replaceTabId: gesture.target, provisionalTabId: gesture.provisional };
+    if (path.endsWith('.yantraC')) void store.getState().openCanvas(path, options);
+    else void store.getState().openDocument(path, options);
+  }, [session, store]);
   const toggleFolder = useCallback((path: string) => {
     const next = new Set(expanded);
     if (next.has(path)) next.delete(path); else next.add(path);
@@ -162,8 +297,6 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
   const expandFolder = useCallback((path: string) => {
     setDestination({ session, folder, expanded: new Set([...expanded, path]) });
   }, [session, folder, expanded]);
-  const createDocumentInFolder = useCallback(() => createDocument(folder), [createDocument, folder]);
-  const createCanvasInFolder = useCallback(() => createCanvas(folder), [createCanvas, folder]);
   const createFolderInFolder = useCallback(() => setDialog({ kind: 'create-folder', folder }), [folder]);
   const openEntryMenu = useCallback((entry: VaultTreeEntry, position: { x: number; y: number }) => {
     setMenu({ path: entry.id, entryKind: entry.kind, x: position.x, y: position.y });
@@ -176,22 +309,30 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
     <button title="Open Vault" aria-label="Open Vault" disabled={state.busy} onClick={() => void state.choose(false)}><SidebarIcon kind="openFolder" size={15} /><span>Open vault</span></button>
   </div>, [state.busy, state.choose]);
 
-  const sidebar = <div className="vault-navigation">
+  const sidebar = <div ref={navRef} className="vault-navigation" inert={state.busy} tabIndex={-1}
+    onMouseDown={() => navRef.current?.focus({ preventScroll: true })}>
     {state.vault ? <VaultSidebar
       name={state.vault.name} entries={entries} expandedIds={expanded}
-      selectedId={highlightedFile || state.activePath || undefined} disabled={state.busy}
+      selectedId={highlightedFile || state.activePath || undefined}
+      multiSelectedIds={selectedPaths}
       onSelectRoot={selectRoot}
+      onClearSelection={clearSelection}
+      onSelectEntry={selectSidebarEntry}
+      onPrepareDrag={prepareDrag}
       onOpen={openEntry}
+      onReplace={replaceEntry}
       onToggleFolder={toggleFolder}
       onExpandFolder={expandFolder}
-      onCreateDocument={createDocumentInFolder}
-      onCreateCanvas={createCanvasInFolder}
+      onCreateDocument={() => createDocument()}
+      onCreateCanvas={() => createCanvas()}
       onCreateFolder={createFolderInFolder}
       onMoveEntry={moveByDrag}
+      onMoveEntries={moveGroupByDrag}
       onEntryMenu={openEntryMenu}
     /> : <section className="vault-sidebar"><div className="vault-sidebar__heading">No vault open</div></section>}
-    {state.vault && <div className="vault-destination" title={`${state.vault.name}/${folder}`}>New file in: {folder || '/'}</div>}
     {vaultActions}
+  </div>;
+  const dialogs = <>
     {menu && <VaultContextMenu label={`${kindLabels[menu.entryKind]} actions`} items={menuItems(menu)}
       position={{ x: menu.x, y: menu.y }} onDismiss={() => setMenu(null)} />}
     {dialog?.kind === 'delete' && state.vault && <VaultDeleteDialog
@@ -230,11 +371,13 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
       onSubmit={(target) => submitOrganize(() => state.moveEntry(dialog.path, target),
         () => revealOrganized(dialog.path, movedPath(dialog.path, target), target))}
       onDismiss={() => setDialog(null)} />}
-  </div>;
+  </>;
 
 
   const dialogOpen = dialog !== null;
-  const viewport = useMemo(() => ({ dialogOpen, folder, createDocument, createCanvas, openFile, focusDocumentId, setFocusDocumentId }),
-    [dialogOpen, folder, createDocument, createCanvas, openFile, focusDocumentId]);
-  return { sidebar, ...viewport, viewport };
+  const viewport = useMemo(() => ({
+    dialogOpen, folder, createDocument, createCanvas, createDocumentAtRoot, createCanvasAtRoot,
+    openFile, renameFile, focusDocumentId, setFocusDocumentId,
+  }), [dialogOpen, folder, createDocument, createCanvas, createDocumentAtRoot, createCanvasAtRoot, openFile, renameFile, focusDocumentId]);
+  return { sidebar, dialogs, entries, ...viewport, viewport };
 }

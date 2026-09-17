@@ -8,11 +8,11 @@ import { FILE_EXTENSIONS } from '../shared/vault-paths';
 
 const relativePath = z.string().min(1).refine((value) => !path.isAbsolute(value) && !value.includes('\\')
   && value.split('/').every((part) => part && part !== '.' && part !== '..' && part !== '.yantra'));
-export const deletionSchema = z.object({
+export const deletionSchema = z.strictObject({
   version: z.literal(1), path: relativePath, kind: z.enum(['document', 'canvas', 'folder']),
   original: z.string(),
-  canvases: z.array(z.object({ path: relativePath, before: z.string(), after: z.string() }).strict()),
-}).strict();
+  canvases: z.array(z.strictObject({ path: relativePath, before: z.string(), after: z.string() })),
+});
 export type DeletionRecord = z.infer<typeof deletionSchema>;
 
 /** Fingerprint the whole folder without following symbolic links outside it. */

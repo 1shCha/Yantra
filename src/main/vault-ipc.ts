@@ -12,7 +12,7 @@ import { VaultRepository } from './vault-repository';
 import { vaultTrace, vaultTraceOperation } from './vault-diagnostics';
 import { VAULT_TRACE_CHANNEL } from '../shared/vault-trace';
 
-const preferenceSchema = z.object({ lastVault: z.string() }).strict();
+const preferenceSchema = z.strictObject({ lastVault: z.string() });
 
 function handle<Args extends unknown[], T>(channel: string,
   work: (event: Electron.IpcMainInvokeEvent, ...args: Args) => Promise<T>, classify?: (value: T) => OperationResult<T>) {
@@ -103,7 +103,9 @@ export function registerVaultIpcHandlers(): void {
   handle(VAULT_CHANNELS.RENAME_ENTRY, (_event, sessionId: string, relative: string, name: string, documentTitle?: string) =>
     active(z.string().parse(sessionId)).renameEntry(z.string().parse(relative), z.string().parse(name), z.string().optional().parse(documentTitle)));
   handle(VAULT_CHANNELS.MOVE_ENTRY, (_event, sessionId: string, relative: string, folder: string, placement?: EntryPlacement) =>
-    active(z.string().parse(sessionId)).moveEntry(z.string().parse(relative), z.string().parse(folder), z.object({ anchor: z.string(), side: z.enum(['before', 'after']) }).strict().optional().parse(placement)));
+    active(z.string().parse(sessionId)).moveEntry(z.string().parse(relative), z.string().parse(folder), z.strictObject({ anchor: z.string(), side: z.enum(['before', 'after']) }).optional().parse(placement)));
+  handle(VAULT_CHANNELS.MOVE_ENTRIES, (_event, sessionId: string, paths: string[], folder: string) =>
+    active(z.string().parse(sessionId)).moveEntries(z.array(z.string()).parse(paths), z.string().parse(folder)));
   handle(VAULT_CHANNELS.REFRESH, (_event, sessionId: string) => active(z.string().parse(sessionId)).refresh(), snapshotResult);
   handle(VAULT_CHANNELS.DELETE_CANVAS_NODES, (_event, sessionId: string, canvasId: string, nodeIds: string[]) =>
     active(z.string().parse(sessionId)).deleteCanvasNodes(z.uuid().parse(canvasId), z.array(z.uuid()).parse(nodeIds)));

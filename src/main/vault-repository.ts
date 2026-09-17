@@ -13,6 +13,7 @@ import { migrateVaultNames } from './vault-name-migration';
 import { canvasFileSchema, decodeCanvas, newCanvas, removeCanvasNodes, type CanvasFile } from '../shared/vault-canvas';
 import { VaultDeletion, folderDeletionFingerprint, type DeletionRecord } from './vault-deletion';
 import { OperationError, operationFailure } from '../shared/operation-result';
+import { batchMoveTargets, movedEntryPath, normalizeBatchMoveSources, rejectNestedBatchDestination, type VaultBatchMoveResult } from '../shared/vault-batch-move';
 import { orderEntries, reorderedPaths, type EntryPlacement, relocatedPath, vaultNameSchema, type VaultEntryChange } from '../shared/vault-organization';
 import { decodeDocument, documentFileSchema, newDocument, vaultMetadataSchema,
   type DocumentFile, type VaultEntry, type VaultMetadata, type VaultSnapshot } from '../shared/vault-format';
@@ -236,13 +237,12 @@ export class VaultRepository {
             throw new OperationError({ code: 'invalid-input', message: 'A document can appear on only one canvas.' });
           }
         }
-        const existingReference = current.nodes.some((candidate) => candidate.id === node.id && candidate.documentId === node.documentId);
-        if (!existingReference) {
-          const documentPath = this.documentPaths.get(node.documentId);
-          if (!documentPath) throw new OperationError({ code: 'invalid-input', message: 'Save the document before adding its canvas reference.' });
-          await this.readDocument(documentPath);
-        }
       }
+      await Promise.all(canvas.nodes.filter((node) => !current.nodes.some((candidate) => candidate.id === node.id && candidate.documentId === node.documentId)).map(async (node) => {
+        const documentPath = this.documentPaths.get(node.documentId);
+        if (!documentPath) throw new OperationError({ code: 'invalid-input', message: 'Save the document before adding its canvas reference.' });
+        await this.readDocument(documentPath);
+      }));
       if (!overwrite) await this.unchanged(relative);
       await atomicWrite(await this.resolve(relative), `${JSON.stringify(canvas, null, 2)}\n`);
       this.baselines.set(relative, `${JSON.stringify(canvas, null, 2)}\n`);
@@ -310,6 +310,72 @@ export class VaultRepository {
     });
   }
 
+  moveEntries(paths: readonly string[], folder: string): Promise<VaultBatchMoveResult> {
+    return this.mutate(async () => {
+      const normalized = normalizeBatchMoveSources(paths, this.metadata.sidebarOrder ?? []);
+      const { toMove, unchanged, targets } = batchMoveTargets(normalized, folder);
+      if (!toMove.length) return { changes: [], unchanged };
+      await this.preflightBatchMove(toMove, folder, targets);
+      const changes: VaultEntryChange[] = [];
+      try {
+        for (const relative of toMove) {
+          changes.push(await this.relocate(relative, movedEntryPath(relative, folder)));
+        }
+      } catch (error) {
+        const failurePath = toMove[changes.length] ?? toMove[0]!;
+        return {
+          changes,
+          unchanged,
+          failure: {
+            path: failurePath,
+            error: operationFailure(error),
+            unattempted: toMove.slice(changes.length + 1),
+          },
+        };
+      }
+      return { changes, unchanged };
+    });
+  }
+
+  private async preflightBatchMove(sources: readonly string[], folder: string, targets: readonly string[]): Promise<void> {
+    this.assertWritable();
+    if (folder) {
+      const parent = await this.resolve(folder);
+      if (!(await fs.stat(parent)).isDirectory()) throw new OperationError({ code: 'invalid-input', message: 'Destination is not a folder.' });
+    }
+    if (rejectNestedBatchDestination(sources, folder)) {
+      throw new OperationError({ code: 'invalid-input', message: 'A folder cannot be moved inside itself.' });
+    }
+    if (new Set(targets).size !== targets.length) {
+      throw new OperationError({ code: 'collision', message: 'Selected items would use the same name in the destination folder.' });
+    }
+    const moving = new Set(sources);
+    for (let index = 0; index < sources.length; index += 1) {
+      const relative = sources[index]!;
+      const target = targets[index]!;
+      await this.entryPath(relative);
+      if (relative !== target) {
+        try {
+          await this.resolve(target);
+          if (!moving.has(target)) {
+            throw new OperationError({ code: 'collision', message: 'An item with this name already exists in this location.' });
+          }
+        } catch (error) {
+          if (error instanceof OperationError) throw error;
+          if (!(error instanceof Error && isCode(error, 'ENOENT'))) throw error;
+        }
+      }
+      const source = await this.resolve(relative);
+      if ((await fs.stat(source)).isDirectory()) {
+        for (const baseline of this.baselines.keys()) {
+          if (baseline === relative || baseline.startsWith(`${relative}/`)) await this.unchanged(baseline);
+        }
+      } else {
+        await this.unchanged(relative);
+      }
+    }
+  }
+
   private async saveSidebarOrder(sidebarOrder: string[]): Promise<void> {
     const metadataPath = path.join(this.root, '.yantra', 'vault.json');
     if ((await fs.lstat(path.dirname(metadataPath))).isSymbolicLink() || (await fs.lstat(metadataPath)).isSymbolicLink()) {
@@ -327,6 +393,25 @@ export class VaultRepository {
 
   private fileExtension(relative: string): '.yantraD' | '.yantraC' {
     return vaultFileExtension(relative);
+  }
+
+  /** Case-only renames on case-insensitive filesystems share one inode with the destination path. */
+  private async renameCaseOnly(source: string, destination: string): Promise<void> {
+    if (source === destination) return;
+    const directory = path.dirname(destination);
+    const temp = path.join(directory, `.yantra-case-rename-${randomUUID()}`);
+    await fs.rename(source, temp);
+    await fs.rename(temp, destination);
+  }
+
+  private async sameInode(source: string, destination: string): Promise<boolean> {
+    try {
+      const [sourceStat, destinationStat] = await Promise.all([fs.lstat(source), fs.lstat(destination)]);
+      return sourceStat.dev === destinationStat.dev && sourceStat.ino === destinationStat.ino;
+    } catch (error) {
+      if (error instanceof Error && isCode(error, 'ENOENT')) return false;
+      throw error;
+    }
   }
 
   private async relocate(from: string, to: string, title?: string, documentTitle?: string): Promise<VaultEntryChange> {
@@ -349,8 +434,29 @@ export class VaultRepository {
     const targetFolder = to.split('/').slice(0, -1).join('/');
     const destination = path.join(await this.resolve(targetFolder), to.split('/').at(-1)!);
     const result: VaultEntryChange = { from, to };
-    if ((await fs.stat(source)).isDirectory()) {
-      for (const relative of this.baselines.keys()) if (relative.startsWith(`${from}/`)) await this.unchanged(relative);
+    const caseOnlyRename = await this.sameInode(source, destination);
+    if (caseOnlyRename) {
+      if ((await fs.stat(source)).isDirectory()) {
+        await Promise.all([...this.baselines.keys()].filter((relative) => relative.startsWith(`${from}/`)).map((relative) => this.unchanged(relative)));
+        await this.renameCaseOnly(source, destination);
+      } else {
+        const extension = this.fileExtension(from);
+        await this.unchanged(from);
+        const file = extension === FILE_EXTENSIONS.document ? await this.readDocument(from) : await this.readCanvas(from);
+        if (title) {
+          const renamed = extension === FILE_EXTENSIONS.document && documentTitle !== undefined
+            ? { ...file, title, doc: tiptapDocSchema.parse(withDocumentTitle(documentFileSchema.parse(file).doc, documentTitle)), updatedAt: new Date().toISOString() }
+            : { ...file, title, updatedAt: new Date().toISOString() };
+          const raw = `${JSON.stringify(renamed, null, 2)}\n`;
+          await atomicWrite(source, raw);
+          this.baselines.set(from, raw);
+          if (extension === FILE_EXTENSIONS.document) result.document = documentFileSchema.parse(renamed);
+          else result.canvas = canvasFileSchema.parse(renamed);
+        }
+        await this.renameCaseOnly(source, destination);
+      }
+    } else if ((await fs.stat(source)).isDirectory()) {
+      await Promise.all([...this.baselines.keys()].filter((relative) => relative.startsWith(`${from}/`)).map((relative) => this.unchanged(relative)));
       // Reserve an empty destination exclusively; rename replaces only our empty directory.
       await fs.mkdir(destination);
       try { await fs.rename(source, destination); }
@@ -435,12 +541,12 @@ export class VaultRepository {
       for (const { relative, documentId } of paths) {
         try {
           const record: DeletionRecord = { version: 1, path: relative, kind: 'document', original: await this.unchanged(relative), canvases: [] };
-          for (const [relativeCanvas, file] of this.canvases) {
+          record.canvases.push(...(await Promise.all([...this.canvases].map(async ([relativeCanvas, file]) => {
             const removed = new Set(file.nodes.filter((node) => node.documentId === documentId).map((node) => node.id));
-            if (!removed.size) continue;
-            record.canvases.push({ path: relativeCanvas, before: await this.unchanged(relativeCanvas),
-              after: `${JSON.stringify(removeCanvasNodes(file, removed), null, 2)}\n` });
-          }
+            if (!removed.size) return null;
+            return { path: relativeCanvas, before: await this.unchanged(relativeCanvas),
+              after: `${JSON.stringify(removeCanvasNodes(file, removed), null, 2)}\n` };
+          }))).filter((change): change is NonNullable<typeof change> => change !== null));
           await this.deletion.begin(record);
           for (const change of record.canvases) {
             const raw = await this.files.read(change.path);
@@ -483,18 +589,16 @@ export class VaultRepository {
       const record: DeletionRecord = { version: 1, path: relative, kind: entry.kind, original: '', canvases: [] };
       if (entry.kind === 'folder') {
         record.original = await folderDeletionFingerprint(source);
-        for (const candidate of affected) {
-          if (candidate.kind !== 'folder') await this.unchanged(candidate.path);
-        }
+        await Promise.all(affected.filter((candidate) => candidate.kind !== 'folder').map((candidate) => this.unchanged(candidate.path)));
       } else record.original = await this.unchanged(relative);
       const documentIds = new Set(affected.flatMap((candidate) => candidate.documentId ? [candidate.documentId] : []));
       if (documentIds.size) {
         if (entries.some((candidate) => !contains(candidate.path) && candidate.kind === 'canvas' && candidate.error)) throw new OperationError({ code: 'unavailable', message: 'Resolve unavailable canvases before deleting a document; its appearances cannot be checked safely.' });
-        for (const [canvasPath, canvas] of this.canvases) {
-          if (contains(canvasPath)) continue;
+        record.canvases.push(...(await Promise.all([...this.canvases].filter(([canvasPath]) => !contains(canvasPath)).map(async ([canvasPath, canvas]) => {
           const ids = new Set(canvas.nodes.filter((node) => documentIds.has(node.documentId)).map((node) => node.id));
-          if (ids.size) record.canvases.push({ path: canvasPath, before: await this.unchanged(canvasPath), after: `${JSON.stringify(removeCanvasNodes(canvas, ids), null, 2)}\n` });
-        }
+          if (!ids.size) return null;
+          return { path: canvasPath, before: await this.unchanged(canvasPath), after: `${JSON.stringify(removeCanvasNodes(canvas, ids), null, 2)}\n` };
+        }))).filter((change): change is NonNullable<typeof change> => change !== null));
       }
       await this.deletion.begin(record);
       return this.scanFiles(true);

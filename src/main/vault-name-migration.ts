@@ -8,10 +8,10 @@ import { canvasFileSchema } from '../shared/vault-canvas';
 import { vaultNameSchema } from '../shared/vault-organization';
 
 const operationSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('file'), from: z.string(), to: z.string(), original: z.string(), content: z.string() }).strict(),
-  z.object({ kind: z.literal('folder'), from: z.string(), to: z.string() }).strict(),
+  z.strictObject({ kind: z.literal('file'), from: z.string(), to: z.string(), original: z.string(), content: z.string() }),
+  z.strictObject({ kind: z.literal('folder'), from: z.string(), to: z.string() }),
 ]);
-const journalSchema = z.object({ cursor: z.number().int().nonnegative(), operations: z.array(operationSchema) }).strict();
+const journalSchema = z.strictObject({ cursor: z.number().int().nonnegative(), operations: z.array(operationSchema) });
 type Operation = z.infer<typeof operationSchema>;
 
 function normalizedName(name: string): string {
@@ -76,7 +76,7 @@ async function planMigration(root: string): Promise<Operation[]> {
       const original = await fs.readFile(await safePath(root, from), 'utf8');
       let content = original;
       try {
-        const input = z.object({ title: z.string() }).passthrough().parse(JSON.parse(original));
+        const input = z.looseObject({ title: z.string() }).parse(JSON.parse(original));
         // Only rewrite titles in understood files; malformed/future content remains byte-for-byte intact.
         if (input.title === stem) {
           const schema = nextExtension === '.yantraD' ? documentFileSchema : canvasFileSchema;
@@ -94,8 +94,7 @@ async function planMigration(root: string): Promise<Operation[]> {
 async function applyOperation(root: string, operation: Operation): Promise<void> {
   const from = await safePath(root, operation.from);
   const to = await safePath(root, operation.to);
-  const sourceExists = await exists(from);
-  const targetExists = await exists(to);
+  const [sourceExists, targetExists] = await Promise.all([exists(from), exists(to)]);
   if (operation.kind === 'file') {
     if (sourceExists && await fs.readFile(from, 'utf8') !== operation.original) throw new Error(`Migration source changed: ${operation.from}`);
     if (targetExists) {

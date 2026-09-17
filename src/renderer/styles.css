@@ -498,6 +498,8 @@ textarea {
   width: 1px;
   height: 18px;
   margin: 0 4px;
+  padding: 0;
+  border: none;
   background: rgba(43, 43, 43, 0.16);
 }
 

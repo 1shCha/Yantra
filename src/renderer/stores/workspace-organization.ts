@@ -18,8 +18,8 @@ function findEntry(entries: VaultEntry[], path: string): VaultEntry | undefined 
 }
 
 
-export function createOrganizationActions(api: YantraVaultApi, set: StoreApi<VaultWorkspaceState>['setState'], get: StoreApi<VaultWorkspaceState>['getState'], resources: ReturnType<typeof createWorkspaceResources>, operations: ReturnType<typeof createWorkspaceOperations>): Pick<VaultWorkspaceState, 'commitDocumentTitle' | 'createFolder' | 'renameEntry' | 'moveEntry'> {
-  const { flushResources, applyEntryChange } = resources;
+export function createOrganizationActions(api: YantraVaultApi, set: StoreApi<VaultWorkspaceState>['setState'], get: StoreApi<VaultWorkspaceState>['getState'], resources: ReturnType<typeof createWorkspaceResources>, operations: ReturnType<typeof createWorkspaceOperations>, syncTabsAfterVaultUpdate: () => void): Pick<VaultWorkspaceState, 'commitDocumentTitle' | 'createFolder' | 'renameEntry' | 'moveEntry' | 'moveEntries'> {
+  const { flushResources, applyEntryChange, applyEntryChanges } = resources;
   const { runOperation, organize } = operations;
   return {
     async commitDocumentTitle(id) {
@@ -61,6 +61,7 @@ export function createOrganizationActions(api: YantraVaultApi, set: StoreApi<Vau
         if (folder && findEntry(vault.entries, folder)?.kind !== 'folder') throw new OperationError({ code: 'invalid-input', message: 'Choose a valid destination folder.' });
         const created = await api.createFolder(vault.sessionId, folder, name).then(unwrapOperation);
         set({ vault: { ...vault, entries: addEntry(vault.entries, folder, { path: created.path, name, kind: 'folder', children: [] }) } });
+        syncTabsAfterVaultUpdate();
       });
     },
     renameEntry(path, name, title) {
@@ -113,6 +114,27 @@ export function createOrganizationActions(api: YantraVaultApi, set: StoreApi<Vau
         if (!entry || entry.error) throw new OperationError({ code: 'invalid-input', message: 'Choose a valid file or folder.' });
         if (folder && findEntry(vault.entries, folder)?.kind !== 'folder') throw new OperationError({ code: 'invalid-input', message: 'Choose a valid destination folder.' });
         applyEntryChange(await api.moveEntry(vault.sessionId, path, folder, placement).then(unwrapOperation));
+      });
+    },
+    moveEntries(paths, folder) {
+      return organize(async (vault) => {
+        if (folder && findEntry(vault.entries, folder)?.kind !== 'folder') {
+          throw new OperationError({ code: 'invalid-input', message: 'Choose a valid destination folder.' });
+        }
+        for (const path of paths) {
+          const entry = findEntry(vault.entries, path);
+          if (!entry || entry.error) throw new OperationError({ code: 'invalid-input', message: 'Choose a valid file or folder.' });
+        }
+        const batch = await api.moveEntries(vault.sessionId, paths, folder).then(unwrapOperation);
+        if (batch.changes.length) applyEntryChanges(batch.changes);
+        if (batch.failure) {
+          throw new OperationError({
+            code: batch.failure.error.code,
+            message: batch.changes.length
+              ? `${batch.changes.length} item${batch.changes.length === 1 ? '' : 's'} moved before the failure at ${batch.failure.path}: ${batch.failure.error.message}`
+              : batch.failure.error.message,
+          });
+        }
       });
     },
   };

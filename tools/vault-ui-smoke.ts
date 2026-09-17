@@ -78,6 +78,32 @@ async function main() {
     assert.equal(await evaluate(`document.querySelector('.vault-tree > ul > li > button').dataset.path`), 'Trash_folder');
     await reorder(first.path, trashDocument.path, 'after');
     assert.equal(await evaluate(`(() => { const paths = Array.from(document.querySelectorAll('.vault-tree > ul > li > button')).map(row => row.dataset.path); return paths.indexOf(${JSON.stringify(first.path)}) > paths.indexOf(${JSON.stringify(trashDocument.path)}); })()`), true);
+    const modifierClick = async (relative: string, shift = false) => {
+      await evaluate(`(() => {
+        const row = Array.from(document.querySelectorAll('[data-path]')).find((entry) => entry.dataset.path === ${JSON.stringify(relative)});
+        row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, ctrlKey: true, shiftKey: ${JSON.stringify(shift)} }));
+      })()`);
+    };
+    await modifierClick(first.path);
+    await modifierClick(trashDocument.path, true);
+    assert.equal(await evaluate(`document.querySelectorAll('.vault-tree__row--multi-selected').length >= 2`), true);
+    await evaluate(`(() => {
+      const row = Array.from(document.querySelectorAll('[data-path]')).find((entry) => entry.dataset.path === ${JSON.stringify(first.path)});
+      row.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }));
+    })()`);
+    await waitFor(`!!document.querySelector('.vault-drag-preview')`);
+    await evaluate(`(() => {
+      const row = Array.from(document.querySelectorAll('[data-path]')).find((entry) => entry.dataset.path === 'Research');
+      row.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+    })()`);
+    await waitFor(`!!document.querySelector('[data-path="Research"].vault-tree__row--drop')`);
+    await evaluate(`(() => {
+      const row = Array.from(document.querySelectorAll('[data-path]')).find((entry) => entry.dataset.path === 'Research');
+      row.dispatchEvent(new DropEvent('drop', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+    })()`);
+    await waitFor(`!document.querySelector('.vault-tree__row--dragging')`);
+    assert.equal(await evaluate(`!!document.querySelector('[data-path="Research/${first.path.split('/').pop()}"]')`), true);
+    assert.equal(await evaluate(`!!document.querySelector('[data-path="Research/${trashDocument.path.split('/').pop()}"]')`), true);
     await window.reload();
     await waitFor(`document.querySelector('.vault-tree > ul > li > button')?.dataset.path === 'Trash_folder'`);
     const contextMenu = async (relative: string) => {

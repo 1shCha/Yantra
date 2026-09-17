@@ -1,3 +1,4 @@
+import type { WorkspaceTab, OpenTabOptions } from './workspace-tabs';
 import type { EntryPlacement } from '../../shared/vault-organization';
 import type { OperationResult } from '../../shared/operation-result';
 import type { DocumentFile, VaultSnapshot } from '../../shared/vault-format';
@@ -22,6 +23,11 @@ export interface LoadedCanvas {
 }
 
 export interface VaultWorkspaceState {
+  tabs: WorkspaceTab[];
+  activeTabId: string | null;
+  activateTab: (id: string) => Promise<OperationResult>;
+  closeTab: (id: string) => Promise<OperationResult>;
+  reorderTab: (id: string, toIndex: number) => void;
   deletingCanvasId: string | null;
   deletingDocumentIds: ReadonlySet<string>;
   titleErrors: Map<string, string>;
@@ -44,22 +50,26 @@ export interface VaultWorkspaceState {
   busy: boolean;
   restore: () => Promise<OperationResult>;
   choose: (create: boolean) => Promise<OperationResult>;
-  openDocument: (path: string) => Promise<OperationResult>;
+  openDocument: (path: string, options?: OpenTabOptions) => Promise<OperationResult>;
   createDocument: (folder?: string) => Promise<OperationResult>;
   updateDocument: (id: string, doc: TiptapDoc) => void;
   flush: () => Promise<void>;
   retry: (id: string) => Promise<OperationResult>;
-  openCanvas: (path: string) => Promise<OperationResult>;
+  openCanvas: (path: string, options?: OpenTabOptions) => Promise<OperationResult>;
   createCanvas: (folder?: string) => Promise<OperationResult>;
   updateCanvas: (id: string, presentation: CanvasPresentation) => void;
+  updateCanvasViewport: (id: string, viewport: CanvasPresentation['viewport']) => void;
+  registerViewportFlush: (flush: () => void) => () => void;
   createCanvasNode: (canvasId: string, position: { x: number; y: number }) => Promise<OperationResult>;
   openNodeDocument: (canvasId: string, nodeId: string) => Promise<OperationResult>;
   retryCanvas: (id: string) => Promise<OperationResult>;
   createFolder: (folder: string, name: string) => Promise<OperationResult>;
   renameEntry: (path: string, name: string, documentTitle?: string) => Promise<OperationResult>;
   moveEntry: (path: string, folder: string, placement?: EntryPlacement) => Promise<OperationResult>;
+  moveEntries: (paths: string[], folder: string) => Promise<OperationResult>;
   getAppearance: (documentId: string) => CanvasAppearance | null;
   placeDocument: (canvasId: string, documentId: string, position: { x: number; y: number }) => Promise<OperationResult>;
   revealDocument: (documentId: string) => Promise<OperationResult>;
   revealTarget: { canvasId: string; nodeId: string; requestId: string } | null;
+  blankNodeEditTarget: { canvasId: string; nodeId: string; requestId: string } | null;
 }

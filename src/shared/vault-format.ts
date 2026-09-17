@@ -3,21 +3,21 @@ import { OperationError, type OperationFailure } from './operation-result';
 import { createEmptyTiptapDoc, tiptapDocSchema } from './tiptap-document';
 import { vaultNameSchema, type CanvasAppearance } from './vault-organization';
 
-export const vaultMetadataSchema = z.object({
+export const vaultMetadataSchema = z.strictObject({
   sidebarOrder: z.array(z.string()).optional(),
   formatVersion: z.literal(1),
   id: z.uuid(),
   createdAt: z.iso.datetime(),
-}).strict();
+});
 
-export const documentFileSchema = z.object({
+export const documentFileSchema = z.strictObject({
   formatVersion: z.literal(1),
   id: z.uuid(),
   title: vaultNameSchema,
   doc: tiptapDocSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
-}).strict();
+});
 
 export type VaultMetadata = z.infer<typeof vaultMetadataSchema>;
 export type DocumentFile = z.infer<typeof documentFileSchema>;

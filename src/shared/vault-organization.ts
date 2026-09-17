@@ -30,11 +30,13 @@ export function relocateEntries(entries: VaultEntry[], from: string, to: string)
     return { ...entry, path, name: path.split('/').at(-1)!, children: entry.children?.map(update) };
   }
   function remove(items: VaultEntry[]): VaultEntry[] {
-    return items.filter((entry) => {
-      if (entry.path !== from) return true;
-      moved = update(entry);
-      return false;
-    }).map((entry) => entry.children ? { ...entry, children: remove(entry.children) } : entry);
+    const next = items.flatMap((entry) => {
+      if (entry.path === from) { moved = update(entry); return []; }
+      if (!entry.children) return [entry];
+      const children = remove(entry.children);
+      return [children === entry.children ? entry : { ...entry, children }];
+    });
+    return next.length === items.length && next.every((entry, index) => entry === items[index]) ? items : next;
   }
   const remaining = remove(entries);
   if (!moved) throw new Error('The source entry is not in the vault.');

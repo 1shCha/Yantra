@@ -1,6 +1,7 @@
 import type { EntryPlacement } from './vault-organization';
 import type { DocumentFile, VaultSnapshot } from './vault-format';
 import type { CanvasFile } from './vault-canvas';
+import type { VaultBatchMoveResult } from './vault-batch-move';
 import type { VaultEntryChange } from './vault-organization';
 import type { OperationFailure, OperationResult } from './operation-result';
 
@@ -27,6 +28,7 @@ export interface VaultOperations {
   createFolder: (sessionId: string, folder: string, name: string) => Promise<{ path: string }>;
   renameEntry: (sessionId: string, path: string, name: string, documentTitle?: string) => Promise<VaultEntryChange>;
   moveEntry: (sessionId: string, path: string, folder: string, placement?: EntryPlacement) => Promise<VaultEntryChange>;
+  moveEntries: (sessionId: string, paths: string[], folder: string) => Promise<VaultBatchMoveResult>;
 }
 
 // Plain results preserve error categories across both Electron IPC and contextBridge.
@@ -42,6 +44,7 @@ export const VAULT_CHANNELS = {
   READ_CANVAS: 'vault:read-canvas', CREATE_CANVAS: 'vault:create-canvas', SAVE_CANVAS: 'vault:save-canvas',
   CREATE_NODE_DOCUMENT: 'vault:create-node-document',
   CREATE_FOLDER: 'vault:create-folder', RENAME_ENTRY: 'vault:rename-entry', MOVE_ENTRY: 'vault:move-entry',
+  MOVE_ENTRIES: 'vault:move-entries',
 } as const;
 
 declare global {

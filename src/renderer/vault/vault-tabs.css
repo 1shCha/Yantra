@@ -1,0 +1,46 @@
+/* The tab strip occupies the bridge between the two window notches. */
+.app-shell__tabs { position: absolute; top: 4px; left: 173px; right: 56px; height: 28px; z-index: 2; transition: left 320ms cubic-bezier(.22,1,.36,1), right 320ms cubic-bezier(.22,1,.36,1); }
+.app-shell--sidebar-open .app-shell__tabs { left: calc(var(--left-sidebar-width, 165px) + 12px); }
+.app-shell--right-sidebar-open .app-shell__tabs { right: calc(var(--right-sidebar-width, 320px) + 12px); }
+.app-shell--resizing .app-shell__tabs { transition: none; }
+.app-shell--tabs .vault-workspace { box-sizing: border-box; padding-top: 32px; }
+.app-shell--tabs:not(.app-shell--sidebar-open) .vault-file-header { margin-top: 0; }
+.vault-tabs { display: flex; align-items: center; gap: 4px; height: 100%; min-width: 0; }
+.vault-tabs__list { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
+.vault-tabs__list::-webkit-scrollbar { display: none; }
+.vault-tab { position: relative; display: flex; align-items: center; flex: 0 0 160px; min-width: 0; width: 160px; box-sizing: border-box; height: 28px; padding: 0 5px 0 2px; border-radius: 10px; color: #737373; }
+.vault-tab + .vault-tab::before { content: ''; position: absolute; left: -3px; height: 13px; width: 1px; background: #dedede; }
+.vault-tab--active + .vault-tab::before, .vault-tab--active::before { display: none; }
+.vault-tab--active { background: #eeeeef; color: #292929; }
+.vault-tab > [role='tab'] { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; height: 100%; padding: 0 7px; border: 0; background: transparent; color: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.vault-tab > [role='tab'] svg { flex-shrink: 0; }
+.vault-tab > [role='tab'] span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-tab__close, .vault-tabs__add { display: grid; place-items: center; flex-shrink: 0; width: 20px; height: 20px; border: 0; padding: 0; background: transparent; color: #888; cursor: pointer; border-radius: 5px; }
+.vault-tab__close { opacity: 0; }
+.vault-tab--active .vault-tab__close, .vault-tab:hover .vault-tab__close, .vault-tab:focus-within .vault-tab__close { opacity: 1; }
+.vault-tab__close:hover, .vault-tabs__add:hover:enabled { background: #e3e3e5; color: #333; }
+.vault-tabs button:focus-visible { outline: 1px solid #777; outline-offset: -1px; border-radius: 5px; }
+.vault-tabs button:disabled { opacity: .45; cursor: default; }
+.vault-tab-picker { position: fixed; inset: auto; margin: 0; padding: 8px; width: 304px; max-width: calc(100vw - 32px); max-height: min(480px, calc(100vh - 70px)); box-sizing: border-box; overflow: auto; border: 1px solid #dedede; border-radius: 12px; background: #fafcff; box-shadow: 0 8px 30px #0002; color: #333; }
+.vault-sidebar.vault-sidebar--picker { padding: 0; color: #555; font-family: inherit; font-size: 12px; line-height: 1.5; }
+.vault-sidebar--picker .vault-sidebar__actions { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e7e7e7; }
+.vault-sidebar--picker .vault-sidebar__actions button { padding: 5px 8px; color: #555; border-radius: 5px; }
+.vault-sidebar--picker .vault-sidebar__actions button:hover:enabled, .vault-sidebar--picker .vault-tree__row:hover:enabled { color: #20201d; background: #eeeef0; }
+.vault-sidebar--picker .vault-tree__row { border-radius: 5px; }
+.vault-sidebar--picker .vault-tree__row--selected { color: #20201d; }
+.vault-sidebar--picker .vault-tree__row--selected svg { color: #555; }
+.vault-sidebar--picker .vault-tree { overflow: visible; }
+.vault-sidebar--picker .vault-tree ul ul > li::before, .vault-sidebar--picker .vault-tree ul ul > li::after { border-color: #dedede; }
+.vault-pane-stack { position: relative; flex: 1; min-height: 0; isolation: isolate; }
+.vault-pane-stack > .vault-tab-pane { position: absolute; inset: 0; height: auto; min-height: 0; overflow: hidden; isolation: isolate; z-index: 0; }
+.vault-pane-stack > .vault-tab-pane:not(.vault-tab-pane--inactive) { z-index: 1; }
+.vault-tab-pane--inactive { visibility: hidden; pointer-events: none; }
+/* React Flow sets inline visibility:visible on measured nodes, which would otherwise
+   paint through this hidden pane into the active document or canvas. */
+.vault-tab-pane--inactive * { visibility: inherit !important; }
+@media (prefers-reduced-motion: reduce) { .app-shell__tabs { transition: none; } }
+.vault-tab > [role='tab'] { touch-action: none; user-select: none; }
+.vault-tabs__list--dragging .vault-tab { transition: transform 120ms ease; }
+.vault-tabs__list--dragging .vault-tab > [role='tab'] { cursor: grabbing; }
+.vault-tabs__list--dragging [data-tab-dragging] { z-index: 1; transition: none; background: #eeeeef; box-shadow: 0 2px 6px #0002; }
+@media (prefers-reduced-motion: reduce) { .vault-tabs__list--dragging .vault-tab { transition: none; } }

@@ -52,6 +52,7 @@ export function CanvasPreview({ missingDocument = false }: { missingDocument?: b
       <div className="vault-canvas-stage">
         <ReactFlowProvider>
           <ReactFlow
+            id="vault-preview"
             nodes={displayedNodes} edges={edges} nodeTypes={nodeTypes}
             nodesDraggable={false} nodesConnectable={false} elementsSelectable={false}
             nodesFocusable={false} edgesFocusable={false} deleteKeyCode={null}
@@ -59,7 +60,7 @@ export function CanvasPreview({ missingDocument = false }: { missingDocument?: b
             fitView fitViewOptions={{ padding: 0.15 }} minZoom={0.1} maxZoom={1}
             zIndexMode="manual" proOptions={{ hideAttribution: true }}
           >
-            <Background variant={BackgroundVariant.Lines} gap={32} size={1} color="rgba(32, 32, 29, 0.1)" />
+            <Background id="vault-preview" variant={BackgroundVariant.Lines} gap={32} size={1} color="rgba(32, 32, 29, 0.1)" />
             <GroupOutlines groups={groups} nodes={nodes} selectedGroupId={null}
               groupOutlineZIndexById={stacking.groupOutlineZIndexById}
               onGroupPointerDown={inertAction} onGroupPointerMove={inertAction}

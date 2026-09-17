@@ -34,6 +34,7 @@ function setup() {
     createFolder: async (_session, folder, name) => ({ path: folder ? `${folder}/${name}` : name }),
     renameEntry: async () => { throw new Error('Not used by this test'); },
     moveEntry: async () => { throw new Error('Not used by this test'); },
+    moveEntries: async () => ({ changes: [], unchanged: [] }),
     readCanvas: async () => { throw new Error('No test canvas'); },
     createCanvas: async () => ({ path: 'Untitled.yantraC', canvas: newCanvas('Untitled') }),
     saveCanvas: async () => ({ savedAt: new Date().toISOString() }),
@@ -233,7 +234,115 @@ describe('vault workspace registry', () => {
 });
 
 
+describe('blank node auto-edit', () => {
+  it('enters title edit mode after a blank node is created on the active canvas', async () => {
+    const { store } = setup();
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    try {
+      await store.getState().createCanvasNode(canvasId, { x: 400, y: 300 });
+      const state = session.flow.getState();
+      expect(state.nodes).toHaveLength(1);
+      expect(state.selectedNodeIds).toEqual([state.nodes[0]!.id]);
+      expect(state.editingNodeId).toBe(state.nodes[0]!.id);
+      expect(store.getState().blankNodeEditTarget).toBeNull();
+    } finally {
+      disconnect();
+    }
+  });
+
+  it('does not enter edit mode when placing an existing document', async () => {
+    const { store, a, reads } = setup();
+    await store.getState().restore();
+    const opening = store.getState().openDocument('A.yantraD');
+    reads.get('A.yantraD')!.resolve(a);
+    await opening;
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    try {
+      expect((await store.getState().placeDocument(canvasId, a.id, { x: 400, y: 300 })).status).toBe('success');
+      const state = session.flow.getState();
+      expect(state.editingNodeId).toBeNull();
+      expect(store.getState().blankNodeEditTarget).toBeNull();
+    } finally {
+      disconnect();
+    }
+  });
+
+  it('does not leave edit state when blank-node creation fails', async () => {
+    const { store, api } = setup();
+    api.createNodeDocument = async () => { throw new Error('Disk full'); };
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    try {
+      expect((await store.getState().createCanvasNode(canvasId, { x: 400, y: 300 })).status).toBe('failure');
+      expect(session.flow.getState().editingNodeId).toBeNull();
+      expect(store.getState().blankNodeEditTarget).toBeNull();
+    } finally {
+      disconnect();
+    }
+  });
+
+  it('switches title edit to the newest successfully created blank node', async () => {
+    const { store, api } = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = api.createNodeDocument;
+    let calls = 0;
+    api.createNodeDocument = async (...args) => {
+      if (++calls === 1) await gate;
+      return original(...args);
+    };
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    try {
+      const first = store.getState().createCanvasNode(canvasId, { x: 400, y: 300 });
+      const second = store.getState().createCanvasNode(canvasId, { x: 800, y: 300 });
+      release();
+      expect((await first).status).toBe('success');
+      expect((await second).status).toBe('success');
+      const state = session.flow.getState();
+      expect(state.nodes).toHaveLength(2);
+      expect(state.editingNodeId).toBe(state.nodes[1]!.id);
+      expect(state.selectedNodeIds).toEqual([state.nodes[1]!.id]);
+    } finally {
+      disconnect();
+    }
+  });
+
+  it('skips auto-edit when the canvas is no longer active', async () => {
+    const { store, a, reads } = setup();
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    const opening = store.getState().openDocument('A.yantraD');
+    reads.get('A.yantraD')!.resolve(a);
+    await opening;
+    try {
+      await store.getState().createCanvasNode(canvasId, { x: 400, y: 300 });
+      expect(session.flow.getState().editingNodeId).toBeNull();
+      expect(store.getState().blankNodeEditTarget).toBeNull();
+    } finally {
+      disconnect();
+    }
+  });
+});
+
 describe('canvas node render identity', () => {
+  afterEach(() => vi.useRealTimers());
   it('preserves existing flow nodes when adding a node and replaces changed geometry', async () => {
     const { store } = setup();
     await store.getState().restore();
@@ -260,5 +369,252 @@ describe('canvas node render identity', () => {
     } finally {
       disconnect();
     }
+  });
+
+  it('coalesces viewport movement, retains geometry, and flushes the final position', async () => {
+    vi.useFakeTimers();
+    const { store, api } = setup();
+    const writes: ReturnType<typeof newCanvas>[] = [];
+    api.saveCanvas = async (_session, file) => { writes.push(file); return { savedAt: new Date().toISOString() }; };
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    try {
+      const before = store.getState().canvases.get(canvasId)!.file;
+      const nodes = session.flow.getState().nodes;
+      const revision = store.getState().canvases.get(canvasId)!.save.revision;
+      session.setViewport({ x: 10, y: 0, zoom: 1 });
+      session.setViewport({ x: 20, y: 4, zoom: 1 });
+      session.setViewport({ x: 30, y: 8, zoom: 1 });
+      expect(store.getState().canvases.get(canvasId)!.file).toBe(before);
+      vi.advanceTimersByTime(100);
+      const after = store.getState().canvases.get(canvasId)!;
+      expect(after.file.viewport).toEqual({ x: 30, y: 8, zoom: 1 });
+      expect(after.file.nodes).toBe(before.nodes);
+      expect(after.file.edges).toBe(before.edges);
+      expect(session.flow.getState().nodes).toBe(nodes);
+      expect(after.save.revision).toBe(revision + 1);
+      session.setViewport({ x: 40, y: 12, zoom: 1 });
+      await store.getState().flush();
+      expect(writes.at(-1)?.viewport).toEqual({ x: 40, y: 12, zoom: 1 });
+      session.setViewport({ x: 50, y: 16, zoom: 1 });
+    } finally { disconnect(); }
+    await store.getState().flush();
+    expect(writes.at(-1)?.viewport).toEqual({ x: 50, y: 16, zoom: 1 });
+  });
+
+  it('persists the final viewport after closing the tab and flushing', async () => {
+    vi.useFakeTimers();
+    const { store, api } = setup();
+    const writes: ReturnType<typeof newCanvas>[] = [];
+    api.saveCanvas = async (_session, file) => { writes.push(file); return { savedAt: new Date().toISOString() }; };
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const canvasId = store.getState().activeCanvasId!;
+    const tabId = store.getState().activeTabId!;
+    const session = createVaultCanvasSession(store, canvasId);
+    const disconnect = session.connect();
+    try {
+      session.setViewport({ x: 12, y: 24, zoom: 1.25 });
+      vi.advanceTimersByTime(100);
+      await store.getState().closeTab(tabId);
+      await store.getState().flush();
+      expect(store.getState().canvases.get(canvasId)?.file.viewport).toEqual({ x: 12, y: 24, zoom: 1.25 });
+      expect(writes.at(-1)?.viewport).toEqual({ x: 12, y: 24, zoom: 1.25 });
+    } finally { disconnect(); vi.useRealTimers(); }
+  });
+});
+
+describe('workspace tabs', () => {
+  it('reselecting the current tab cancels a pending creation redirect', async () => {
+    const { store, api, a, reads } = setup();
+    await store.getState().restore();
+    const opening = store.getState().openDocument('A.yantraD');
+    reads.get('A.yantraD')!.resolve(a);
+    await opening;
+    const selected = store.getState().activeTabId!;
+    const created = deferred<{ path: string; canvas: ReturnType<typeof newCanvas> }>();
+    api.createCanvas = () => created.promise;
+    const creating = store.getState().createCanvas();
+    await store.getState().activateTab(selected);
+    created.resolve({ path: 'New.yantraC', canvas: newCanvas('New') });
+    expect((await creating).status).toBe('cancelled');
+    expect(store.getState().activeTabId).toBe(selected);
+    expect(store.getState().tabs).toHaveLength(1);
+  });
+  async function cachedCanvasNavigation() {
+    const { store, api, vault } = setup();
+    const a = newCanvas('Canvas_A');
+    const b = newCanvas('Canvas_B');
+    const document = newDocument('Referenced');
+    b.nodes.push({ id: crypto.randomUUID(), kind: 'document', documentId: document.id, x: 0, y: 0, width: 320, height: 220 });
+    b.layerOrder.push(b.nodes[0]!.id);
+    vault.entries.push(
+      { kind: 'canvas', path: 'A.yantraC', name: 'A.yantraC', canvasId: a.id },
+      { kind: 'canvas', path: 'B.yantraC', name: 'B.yantraC', canvasId: b.id },
+      { kind: 'document', path: 'Referenced.yantraD', name: 'Referenced.yantraD', documentId: document.id },
+    );
+    api.readCanvas = async (_session, path) => path === 'A.yantraC' ? a : b;
+    const pending = deferred<DocumentFile>();
+    let reads = 0;
+    api.readDocument = () => ++reads === 1 ? Promise.reject(new Error('Try again')) : pending.promise;
+    await store.getState().restore();
+    await store.getState().openCanvas('A.yantraC');
+    const aTab = store.getState().activeTabId!;
+    await store.getState().openCanvas('B.yantraC');
+    const bTab = store.getState().activeTabId!;
+    await store.getState().activateTab(aTab);
+    return { store, a, b, document, aTab, bTab, pending };
+  }
+
+  it('keeps a reselected canvas active when an older canvas load finishes', async () => {
+    const { store, document, aTab, bTab, pending } = await cachedCanvasNavigation();
+    const loading = store.getState().activateTab(bTab);
+    expect(store.getState().activeTabId).toBe(bTab);
+    expect(store.getState().loadState).toBe('ready');
+    await store.getState().activateTab(aTab);
+    pending.resolve(document);
+    expect((await loading).status).toBe('cancelled');
+    expect(store.getState().activeTabId).toBe(aTab);
+  });
+
+  it('does not reopen a cached canvas closed while its document loads', async () => {
+    const { store, document, aTab, bTab, pending } = await cachedCanvasNavigation();
+    const loading = store.getState().activateTab(bTab);
+    await store.getState().closeTab(bTab);
+    pending.resolve(document);
+    expect((await loading).status).toBe('cancelled');
+    expect(store.getState().activeTabId).toBe(aTab);
+    expect(store.getState().tabs.some((tab) => tab.id === bTab)).toBe(false);
+  });
+  it('focuses existing files and folds a double-click into the original active slot', async () => {
+    const { store, a, b, reads } = setup();
+    await store.getState().restore();
+    const first = store.getState().openDocument('A.yantraD');
+    reads.get('A.yantraD')!.resolve(a); await first;
+    const original = store.getState().activeTabId!;
+    const second = store.getState().openDocument('B.yantraD');
+    const provisional = store.getState().activeTabId!;
+    reads.get('B.yantraD')!.resolve(b); await second;
+    await store.getState().openDocument('B.yantraD', { replaceTabId: original, provisionalTabId: provisional });
+    expect(store.getState().tabs.map((tab) => [tab.id, tab.fileId])).toEqual([[original, b.id]]);
+    await store.getState().openDocument('B.yantraD');
+    expect(store.getState().tabs).toHaveLength(1);
+    expect(store.getState().activeTabId).toBe(original);
+  });
+
+  it('gives an already-open file precedence over replacement', async () => {
+    const { store, a, b, reads } = setup();
+    await store.getState().restore();
+    const first = store.getState().openDocument('A.yantraD'); reads.get('A.yantraD')!.resolve(a); await first;
+    const firstId = store.getState().activeTabId!;
+    const second = store.getState().openDocument('B.yantraD'); reads.get('B.yantraD')!.resolve(b); await second;
+    await store.getState().openDocument('A.yantraD', { replaceTabId: store.getState().activeTabId! });
+    expect(store.getState().tabs).toHaveLength(2);
+    expect(store.getState().activeTabId).toBe(firstId);
+  });
+
+  it('does not reopen a tab when its pending read finishes after closing', async () => {
+    const { store, a, reads } = setup();
+    await store.getState().restore();
+    const pending = store.getState().openDocument('A.yantraD');
+    await store.getState().closeTab(store.getState().activeTabId!);
+    reads.get('A.yantraD')!.resolve(a); await pending;
+    expect(store.getState().tabs).toHaveLength(0);
+    expect(store.getState().activeDocumentId).toBeNull();
+    expect(store.getState().loadState).toBe('idle');
+  });
+
+  it('retains and saves dirty documents after their tabs close', async () => {
+    const { store, a, reads, writes } = setup();
+    await store.getState().restore();
+    const pending = store.getState().openDocument('A.yantraD'); reads.get('A.yantraD')!.resolve(a); await pending;
+    const doc = tiptapDocFromPlainText('Saved after closing');
+    store.getState().updateDocument(a.id, doc);
+    await store.getState().closeTab(store.getState().activeTabId!);
+    await store.getState().flush();
+    expect(writes.at(-1)?.file.doc).toEqual(doc);
+  });
+
+  it('restores tab order and active file from preferences with a new session', async () => {
+    const { api, vault, a, b } = setup();
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+    api.readDocument = async (_session, path) => path === 'A.yantraD' ? a : b;
+    const first = createVaultWorkspace(testVaultApi(api), storage);
+    await first.getState().restore();
+    await first.getState().openDocument('A.yantraD');
+    await first.getState().openDocument('B.yantraD');
+    await first.getState().activateTab(first.getState().tabs[0]!.id);
+    api.restore = async () => ({ ...vault, sessionId: 'fresh-session' });
+    const restored = createVaultWorkspace(testVaultApi(api), storage);
+    await restored.getState().restore();
+    expect(restored.getState().tabs.map((tab) => tab.fileId)).toEqual([a.id, b.id]);
+    expect(restored.getState().activeDocumentId).toBe(a.id);
+    expect(restored.getState().documents.has(b.id)).toBe(false);
+    await restored.getState().closeTab(restored.getState().activeTabId!);
+    expect(restored.getState().activeDocumentId).toBe(b.id);
+    await restored.getState().closeTab(restored.getState().activeTabId!);
+    const empty = createVaultWorkspace(testVaultApi(api), storage);
+    await empty.getState().restore();
+    expect(empty.getState().tabs).toHaveLength(0);
+  });
+
+  it('reconciles renamed and deleted files by identity on refresh', async () => {
+    const { api, store, vault, a, b, reads } = setup();
+    await store.getState().restore();
+    const first = store.getState().openDocument('A.yantraD'); reads.get('A.yantraD')!.resolve(a); await first;
+    const second = store.getState().openDocument('B.yantraD'); reads.get('B.yantraD')!.resolve(b); await second;
+    api.refresh = async () => ({ ...vault, entries: [{ kind: 'document', path: 'Moved.yantraD', name: 'Moved.yantraD', documentId: a.id }] });
+    api.readDocument = async () => ({ ...a, title: 'Moved' });
+    await store.getState().refresh();
+    expect(store.getState().tabs.map((tab) => [tab.fileId, tab.path, tab.title])).toEqual([[a.id, 'Moved.yantraD', 'Moved']]);
+    expect(store.getState().activeDocumentId).toBe(a.id);
+  });
+});
+
+describe('rename render identity', () => {
+  it('retains unrelated resources and the document editor revision on a title rename', async () => {
+    const { store, api, a, b, reads } = setup();
+    await store.getState().restore();
+    const first = store.getState().openDocument('A.yantraD'); reads.get('A.yantraD')!.resolve(a); await first;
+    const second = store.getState().openDocument('B.yantraD'); reads.get('B.yantraD')!.resolve(b); await second;
+    const before = store.getState();
+    api.renameEntry = async () => ({ from: 'A.yantraD', to: 'Renamed.yantraD', document: {
+      ...structuredClone(a), title: 'Renamed', doc: { ...a.doc, content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Renamed' }] }, ...(a.doc.content?.slice(1) ?? [])] },
+    } });
+    expect((await store.getState().renameEntry('A.yantraD', 'Renamed', 'Renamed')).status).toBe('success');
+    const after = store.getState();
+    expect(after.documents.get(a.id)?.reloadRevision).toBe(before.documents.get(a.id)?.reloadRevision);
+    expect(after.documents.get(b.id)).toBe(before.documents.get(b.id));
+    expect(after.canvases).toBe(before.canvases);
+    expect(after.vault?.appearances).toBe(before.vault?.appearances);
+    expect(after.tabs.find((tab) => tab.fileId === b.id)).toBe(before.tabs.find((tab) => tab.fileId === b.id));
+    expect(after.vault?.entries.find((entry) => entry.documentId === b.id)).toBe(before.vault?.entries.find((entry) => entry.documentId === b.id));
+  });
+
+  it('does not publish a flow update when renaming a canvas', async () => {
+    const { store, api } = setup();
+    await store.getState().restore();
+    await store.getState().createCanvas();
+    const id = store.getState().activeCanvasId!;
+    await store.getState().createCanvasNode(id, { x: 100, y: 100 });
+    const session = createVaultCanvasSession(store, id);
+    const disconnect = session.connect();
+    const updates = vi.fn();
+    const unsubscribe = session.flow.subscribe(updates);
+    const before = store.getState();
+    const canvas = before.canvases.get(id)!;
+    const geometry = session.flow.getState();
+    api.renameEntry = async () => ({ from: canvas.path, to: 'Renamed.yantraC', canvas: { ...structuredClone(canvas.file), title: 'Renamed' } });
+    try {
+      expect((await store.getState().renameEntry(canvas.path, 'Renamed')).status).toBe('success');
+      expect(store.getState().canvases.get(id)?.file.title).toBe('Renamed');
+      expect(store.getState().documents).toBe(before.documents);
+      expect(session.flow.getState()).toBe(geometry);
+      expect(updates).not.toHaveBeenCalled();
+    } finally { unsubscribe(); disconnect(); }
   });
 });
