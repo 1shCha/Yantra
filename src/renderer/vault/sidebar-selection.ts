@@ -1,5 +1,4 @@
 import type { MouseEvent } from 'react';
-import { isRootUnfiledPath } from '../../shared/vault-batch-move';
 import type { VaultTreeEntry } from '../vault-ui/VaultSidebar';
 
 export interface VisibleSidebarRow {
@@ -28,7 +27,7 @@ export function collectVisibleSidebarRows(entries: readonly VaultTreeEntry[], ex
   const walk = (items: readonly VaultTreeEntry[]) => {
     for (const entry of items) {
       rows.push({ path: entry.id, kind: entry.kind, unavailable: entry.unavailable });
-      if (entry.kind === 'folder' && expanded.has(entry.id) && entry.children) walk(entry.children);
+      if ((entry.kind === 'folder' || entry.kind === 'canvas') && expanded.has(entry.id) && entry.children) walk(entry.children);
     }
   };
   walk(entries);
@@ -36,7 +35,7 @@ export function collectVisibleSidebarRows(entries: readonly VaultTreeEntry[], ex
 }
 
 export function selectableVisiblePaths(rows: readonly VisibleSidebarRow[]): string[] {
-  return rows.filter((row) => !row.unavailable && !isRootUnfiledPath(row.path)).map((row) => row.path);
+  return rows.filter((row) => !row.unavailable).map((row) => row.path);
 }
 
 export function applySelectionGesture(

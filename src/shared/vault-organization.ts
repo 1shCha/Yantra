@@ -1,5 +1,6 @@
 import type { DocumentFile, VaultEntry } from './vault-format';
 import type { CanvasFile } from './vault-canvas';
+import { isContainerKind } from './vault-packages';
 
 export { vaultNameSchema } from './vault-paths';
 
@@ -17,6 +18,7 @@ export interface VaultEntryChange {
   to: string;
   document?: DocumentFile;
   canvas?: CanvasFile;
+  canvases?: CanvasFile[];
 }
 
 export function relocatedPath(path: string, from: string, to: string): string {
@@ -44,7 +46,7 @@ export function relocateEntries(entries: VaultEntry[], from: string, to: string)
 }
 
 export function insertEntry(entries: VaultEntry[], folder: string, entry: VaultEntry): VaultEntry[] {
-  if (!folder) return [...entries, entry].sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name));
+  if (!folder) return [...entries, entry].sort((a, b) => Number(isContainerKind(b.kind)) - Number(isContainerKind(a.kind)) || a.name.localeCompare(b.name));
   return entries.map((item) => item.path === folder ? { ...item, children: insertEntry(item.children ?? [], '', entry) }
     : item.children && folder.startsWith(`${item.path}/`) ? { ...item, children: insertEntry(item.children, folder, entry) } : item);
 }
@@ -59,7 +61,7 @@ export function orderEntries(entries: VaultEntry[], order: readonly string[] = [
       if (!entry.children) return entry;
       const children = walk(entry.children);
       return children === entry.children ? entry : { ...entry, children };
-    }).sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder')
+    }).sort((a, b) => Number(isContainerKind(b.kind)) - Number(isContainerKind(a.kind))
       || (ranks.get(a.path) ?? Infinity) - (ranks.get(b.path) ?? Infinity));
     return sorted.every((entry, index) => entry === items[index]) ? items : sorted;
   };

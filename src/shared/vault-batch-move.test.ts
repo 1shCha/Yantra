@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { batchMoveTargets, normalizeBatchMoveSources, remapSelectedPaths, rejectNestedBatchDestination } from './vault-batch-move';
 
 describe('vault batch move helpers', () => {
-  it('normalizes sidebar order, deduplicates, and drops carried descendants and root Unfiled', () => {
-    expect(normalizeBatchMoveSources(['B', 'A', 'A/Nested', 'Unfiled', 'B'], ['A', 'B', 'C'])).toEqual(['A', 'B']);
+  it('normalizes sidebar order, deduplicates, and drops carried descendants', () => {
+    expect(normalizeBatchMoveSources(['B', 'A', 'A/Nested', 'Unfiled', 'B'], ['A', 'B', 'C'])).toEqual(['A', 'B', 'Unfiled']);
   });
 
   it('detects nested destinations and unchanged targets', () => {

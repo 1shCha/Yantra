@@ -61,7 +61,8 @@ const VaultTabPane = memo(function VaultTabPane({ store, tab, active, navigation
       onRename={renameDocument} validateName={validateName} saveState={saveLabels[file.save.state]} commitError={state.titleError} onRetry={retryDocument}
       focusRequested={active && navigation.focusDocumentId === file.file.id} onFocusHandled={handleFocus} />
       : canvas ? <>
-        <VaultFileHeader title={canvas.file.title} onRename={renameCanvas} validateName={validateName} kind="canvas" busy={state.busy} saveState={state.canvasSaveState} onRetry={() => { void retryCanvas(); }} />
+        <VaultFileHeader title={canvas.file.title} kind="canvas" busy={state.busy} saveState={state.canvasSaveState}
+          onRename={renameCanvas} validateName={validateName} onRetry={() => { void retryCanvas(); }} />
         <VaultCanvasView key={canvas.reloadRevision} workspace={store} canvasId={canvas.file.id} active={active} />
       </> : active && state.loadState === 'error' ? <div className="vault-file-state"><h1>Unable to open {tab.kind}</h1>
         <button onClick={() => { void store.getState().activateTab(tab.id); }}>Retry</button></div>

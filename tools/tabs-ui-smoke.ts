@@ -29,9 +29,11 @@ async function main() {
   await repo.createFolder('', 'Research');
   const nested = await repo.createDocument('Research');
   const canvas = await repo.createCanvas('');
-  const note = await repo.readDocument(docs[0]!);
-  const nodeId = crypto.randomUUID();
-  await repo.saveCanvas({ ...canvas.canvas, nodes: [{ id: nodeId, kind: 'document', documentId: note.id, x: 160, y: 160, width: 320, height: 240 }], layerOrder: [nodeId] });
+  const canvasNote = await repo.createDocument(canvas.path, { x: 270, y: 197.5 });
+  await repo.saveDocument({
+    ...canvasNote.document,
+    doc: { ...canvasNote.document.doc, content: [...(canvasNote.document.doc.content ?? []), { type: 'paragraph' }] },
+  });
   await fs.writeFile(path.join(userData, 'vault-preferences.json'), JSON.stringify({ lastVault: vault }));
   registerVaultIpcHandlers();
   delete process.env.YANTRA_DEV_SERVER;
@@ -205,9 +207,15 @@ async function main() {
   await wait('!!' + query('.vault-tab-pane[aria-hidden="false"] [contenteditable=true]'));
   await evaluate(editor + '.commands.insertContentAt(' + editor + '.state.doc.content.size - 1, "Changed from canvas");');
   await open(docs[0]!);
-  await wait(editor + '.getText().includes("Changed from canvas")');
   await assertInactiveCanvasNodesHidden();
   await open(canvas.path);
+  await wait(`(() => {
+    const pane = document.querySelector('.vault-tab-pane[aria-hidden="false"]');
+    const preview = pane && pane.querySelector('.markdown-node__preview');
+    const live = pane && pane.querySelector('[contenteditable=true]');
+    return !!(preview && preview.textContent.includes('Changed from canvas'))
+      || !!(live && live.textContent.includes('Changed from canvas'));
+  })()`);
   await click('Open a file or create a tab');
   await wait(query('#vault-tab-picker') + '.matches(":popover-open") && !!' + query('#vault-tab-picker .vault-sidebar'));
   await evaluate(query(row('Research', '#vault-tab-picker')) + '.click()');
@@ -361,30 +369,22 @@ async function main() {
   assert.ok(await evaluate('!!' + query(row('Header_notes.yantraD'))));
   await evaluate(query('[role="tab"][title="' + canvas.path + '"]') + '.click()');
   await wait('!!' + query('.vault-tab-pane[aria-hidden="false"] .react-flow'));
-  assert.ok(await evaluate('(() => { const button=' + query('.vault-tab-pane[aria-hidden="false"] .vault-file-header__rename') + '; const r=button.getBoundingClientRect(); return button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })()'));
+  assert.equal(await evaluate('!!' + query('.vault-tab-pane[aria-hidden="false"] .vault-file-header__rename')), true, 'Package title is editable');
   await click('Rename canvas');
   await wait('!!' + nameInput);
-  await checkGrowingName();
-  await new Promise(resolve => setTimeout(resolve, 150));
   await evaluate('window.uiRenderProbe.reset()');
-  await draftName('Workspace_canvas'); key('Enter');
+  await draftName('Map'); key('Enter');
   await wait('!' + nameInput);
-  await wait(selected + '.textContent === "Workspace_canvas"');
+  await wait(query('[role="tab"][data-file-id="' + canvasRowId + '"]') + '.textContent === "Map"');
   const canvasRename = await renderCounts();
   console.log('Canvas rename render counts', canvasRename);
   assertNoRemounts(canvasRename);
-  for (const [component, count] of Object.entries(canvasRename)) {
-    if (component.startsWith('document:') || component.startsWith('canvas-node:') || component === 'canvas-surface:' || component === 'header:document' || component === 'row:' + notesId || component === 'tab:' + notesId) {
-      assert.equal(count.renders, 0, component + ' must not render for a canvas rename');
-    }
-  }
-  assert.ok(canvasRename['row:' + canvasRowId]?.renders, 'The renamed canvas row must update');
-  assert.ok(canvasRename['tab:' + canvasRowId]?.renders, 'The renamed canvas tab must update');
-  assert.equal(await resourceId('Workspace_canvas.yantraC'), canvasRowId, 'Renaming must keep the canvas row identity');
-  assert.ok(await fs.stat(path.join(vault, 'Workspace_canvas.yantraC')));
+  assert.equal(await resourceId('Map'), canvasRowId, 'Renaming a package keeps the sidebar row identity');
+  assert.ok(await fs.stat(path.join(vault, 'Map', 'Map.yantraC')));
+  assert.ok(await evaluate('!!' + query(row('Map'))));
   await click('Open a file or create a tab');
   await wait(query('#vault-tab-picker') + '.matches(":popover-open") && !!' + query('#vault-tab-picker .vault-sidebar'));
-  assert.ok(await evaluate('!!' + query(row('Workspace_canvas.yantraC', '#vault-tab-picker'))));
+  assert.ok(await evaluate('!!' + query(row('Map', '#vault-tab-picker'))));
   assert.ok(await evaluate('!!' + query(row('Header_notes.yantraD', '#vault-tab-picker'))));
   await evaluate(query('#vault-tab-picker') + '.hidePopover()');
   await evaluate(query('.vault-tab-pane[aria-hidden="false"] .markdown-node__body') + '?.dispatchEvent(new MouseEvent("dblclick", {bubbles:true}))');

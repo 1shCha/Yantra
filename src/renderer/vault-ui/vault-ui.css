@@ -17,7 +17,11 @@ button.vault-root:hover:enabled { color: #fff; }
 .vault-tree ul ul > li::before { content: ''; position: absolute; left: -7px; top: 0; bottom: 0; border-left: 1px solid #303030; pointer-events: none; }
 .vault-tree ul ul > li:last-child::before { bottom: auto; height: 14px; }
 .vault-tree ul ul > li::after { content: ''; position: absolute; left: -7px; top: 14px; width: 7px; border-top: 1px solid #303030; pointer-events: none; }
-.vault-tree__row { position: relative; display: flex; align-items: center; gap: 5px; width: 100%; min-width: 112px; height: 28px; border: 0; border-radius: 0; padding: 0 4px 0 10px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.vault-tree__item { position: relative; display: flex; align-items: center; min-width: 112px; height: 28px; }
+.vault-tree__disclosure { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 28px; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.vault-tree__disclosure svg { color: #888; }
+.vault-tree__row { position: relative; display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; height: 28px; border: 0; border-radius: 0; padding: 0 4px 0 2px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.vault-tree__row--error .vault-tree__name { color: #c97a7a; }
 .vault-tree__row svg, .vault-tree__spacer { flex: 0 0 auto; }
 .vault-tree__row svg { color: #888; }
 .vault-tree__spacer { width: 12px; }
@@ -35,12 +39,12 @@ button.vault-root:hover:enabled { color: #fff; }
 .vault-sidebar button:focus-visible { outline: 1px dashed #aaa; outline-offset: -1px; }
 .vault-sidebar button:disabled { opacity: .45; cursor: default; }
 .vault-sidebar__empty { padding: 4px 2px; color: #888; }
-.vault-tree__row--dragging { opacity: .45; }
-.vault-tree__row--drop, .vault-tree__row--drop:hover { color: #fafcff; outline: 1px dashed #888; outline-offset: -1px; }
+.vault-tree__item--dragging { opacity: .45; }
+.vault-tree__item--drop, .vault-tree__item--drop .vault-tree__row { color: #fafcff; outline: 1px dashed #888; outline-offset: -1px; }
 .vault-root--droppable { outline: 1px dashed #444; outline-offset: -1px; }
 .vault-root--drop, button.vault-root--drop:hover:enabled { color: #fafcff; outline: 1px dashed #aaa; outline-offset: -1px; }
 .vault-tree--drop-root { outline: 1px dashed #888; outline-offset: -1px; }
-.vault-empty { position: relative; height: 100%; background: #e6e6e6; display: grid; place-items: center; overflow: auto; }
+.vault-empty { position: relative; height: 100%; background: #fff; display: grid; place-items: center; overflow: auto; }
 .vault-empty__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 24px; padding: 60px 16px 100px; }
 .vault-empty__actions button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; border: 0; border-radius: 4px; padding: 6px 10px; color: #666; background: transparent; font-size: 13px; cursor: pointer; }
 .vault-empty__actions button:hover { background: #d9d9d9; color: #20201d; }
@@ -57,7 +61,7 @@ button.vault-root:hover:enabled { color: #fff; }
 .vault-file-header__action[aria-pressed="true"], .vault-file-header__action[aria-expanded="true"] { background: #e8e8e8; color: #20201d; }
 .vault-file-header__action:hover:enabled { background: #e8e8e8; }
 .vault-file-header__action:disabled { opacity: 0.35; }
-.vault-document-view, .vault-canvas-view { height: 100%; display: flex; flex-direction: column; background: #fafcff; min-width: 0; }
+.vault-document-view, .vault-canvas-view { height: 100%; display: flex; flex-direction: column; background: #fff; min-width: 0; }
 .vault-document-toolbar { margin-left: auto; flex-shrink: 0; }
 .vault-document-toolbar .editor-toolbar { min-height: 32px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .vault-file-header__identity { flex: 0 1 auto; max-width: 240px; }
@@ -81,7 +85,7 @@ button.vault-root:hover:enabled { color: #fff; }
 .vault-file-header__saved[data-state='Saving'] svg, .vault-spin { animation: vault-spin 1.2s linear infinite; }
 @keyframes vault-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .vault-spin, .vault-file-header__saved[data-state='Saving'] svg { animation: none; } }
-.vault-file-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; box-sizing: border-box; text-align: center; color: #666; background: #fafcff; }
+.vault-file-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; box-sizing: border-box; text-align: center; color: #666; background: #fff; }
 .vault-file-state h1 { font-size: 16px; font-weight: 500; color: #20201d; margin: 16px 0 8px; }
 .vault-file-state p { max-width: 360px; font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
 .vault-dialog { width: min(380px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box; padding: 20px; border: 1px solid #bbb; border-radius: 8px; background: #fafcff; color: #20201d; box-shadow: 0 16px 48px #0003; font: inherit; }
@@ -126,12 +130,12 @@ button.vault-root:hover:enabled { color: #fff; }
   .vault-document-content { padding: 20px 16px 32px; }
 }
 
-.vault-tree__row--insert-before::before, .vault-tree__row--insert-after::after {
+.vault-tree__item--insert-before::before, .vault-tree__item--insert-after::after {
   content: ''; position: absolute; left: 8px; right: 4px; height: 2px;
   background: #b7cfff; pointer-events: none; z-index: 1;
 }
-.vault-tree__row--insert-before::before { top: 0; }
-.vault-tree__row--insert-after::after { bottom: 0; }
+.vault-tree__item--insert-before::before { top: 0; }
+.vault-tree__item--insert-after::after { bottom: 0; }
 
 .vault-file-header__rename { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; text-align: left; }
 .vault-file-header__rename:hover:enabled { text-decoration: underline; text-underline-offset: 3px; }

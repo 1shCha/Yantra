@@ -41,7 +41,7 @@ export function rejectNestedBatchDestination(sources: readonly string[], folder:
 }
 
 export function normalizeBatchMoveSources(paths: readonly string[], sidebarOrder: readonly string[]): string[] {
-  const unique = [...new Set(paths)].filter((path) => !isRootUnfiledPath(path));
+  const unique = [...new Set(paths)];
   const selected = new Set(unique);
   const roots = unique.filter((path) => ![...selected].some((other) => other !== path && path.startsWith(`${other}/`)));
   const ranks = new Map(sidebarOrder.map((path, index) => [path, index]));

@@ -86,8 +86,9 @@ export function registerVaultIpcHandlers(): void {
 
   handle(VAULT_CHANNELS.READ_DOCUMENT, (_event, sessionId: string, relative: string, mode: 'inspect' | 'accept-disk' = 'inspect') =>
     active(z.string().parse(sessionId)).readDocument(z.string().parse(relative), z.enum(['inspect', 'accept-disk']).parse(mode)));
-  handle(VAULT_CHANNELS.CREATE_DOCUMENT, (_event, sessionId: string, folder: string) =>
-    active(z.string().parse(sessionId)).createDocument(z.string().parse(folder)));
+  handle(VAULT_CHANNELS.CREATE_DOCUMENT, (_event, sessionId: string, folder: string, position?: { x: number; y: number }) =>
+    active(z.string().parse(sessionId)).createDocument(z.string().parse(folder),
+      z.strictObject({ x: z.number(), y: z.number() }).optional().parse(position)));
   handle(VAULT_CHANNELS.SAVE_DOCUMENT, (_event, sessionId: string, input: z.input<typeof documentFileSchema>, overwrite = false) =>
     active(z.string().parse(sessionId)).saveDocument(documentFileSchema.parse(input), z.boolean().parse(overwrite)));
   handle(VAULT_CHANNELS.READ_CANVAS, (_event, sessionId: string, relative: string, mode: 'inspect' | 'accept-disk' = 'inspect') =>
@@ -96,8 +97,6 @@ export function registerVaultIpcHandlers(): void {
     active(z.string().parse(sessionId)).createCanvas(z.string().parse(folder)));
   handle(VAULT_CHANNELS.SAVE_CANVAS, (_event, sessionId: string, input: z.input<typeof canvasFileSchema>, overwrite = false) =>
     active(z.string().parse(sessionId)).saveCanvas(canvasFileSchema.parse(input), z.boolean().parse(overwrite)));
-  handle(VAULT_CHANNELS.CREATE_NODE_DOCUMENT, (_event, sessionId: string) =>
-    active(z.string().parse(sessionId)).createNodeDocument());
   handle(VAULT_CHANNELS.CREATE_FOLDER, (_event, sessionId: string, folder: string, name: string) =>
     active(z.string().parse(sessionId)).createFolder(z.string().parse(folder), z.string().parse(name)));
   handle(VAULT_CHANNELS.RENAME_ENTRY, (_event, sessionId: string, relative: string, name: string, documentTitle?: string) =>

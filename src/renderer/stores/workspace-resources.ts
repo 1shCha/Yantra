@@ -10,7 +10,8 @@ import { documentSchemaExtensions } from '../editor/tiptap-schema';
 import { SaveCoordinator, type SaveStatus } from '../persistence/save-coordinator';
 import type { LoadedDocument, LoadedCanvas, VaultWorkspaceState } from './workspace-types';
 import type { WorkspaceRequests } from './workspace-requests';
-import { MARKDOWN_NODE_DEFAULT_HEIGHT, MARKDOWN_NODE_DEFAULT_WIDTH } from '../canvas/react-flow-mapping';
+import { assertPresentationOnlySave, findVaultEntry, flattenVaultEntries } from '../../shared/vault-packages';
+import { parentFolderOf } from '../../shared/vault-paths';
 
 export function createWorkspaceResources(api: YantraVaultApi, set: StoreApi<VaultWorkspaceState>['setState'], get: StoreApi<VaultWorkspaceState>['getState'], requests: WorkspaceRequests, overwrites: Set<string>, syncTabsAfterVaultUpdate: () => void) {
   let coordinator: SaveCoordinator<DocumentFile> | null = null;
@@ -92,18 +93,13 @@ export function createWorkspaceResources(api: YantraVaultApi, set: StoreApi<Vaul
     const loaded = get().canvases.get(id);
     if (!loaded || !canvasCoordinator) throw new OperationError({ code: 'unavailable', message: 'Canvas is not loaded.' });
     const presentation = canvasPresentationSchema.parse(input);
-    const otherDocumentIds = new Set([...get().canvases.values()]
-      .filter((canvas) => canvas.file.id !== id)
-      .flatMap((canvas) => canvas.file.nodes.map((node) => node.documentId)));
-    const existingReferences = new Map(loaded.file.nodes.map((node) => [node.id, node.documentId]));
-    for (const node of presentation.nodes) {
-      if (otherDocumentIds.has(node.documentId)) {
-        throw new OperationError({ code: 'invalid-input', message: 'A document can appear on only one canvas.' });
-      }
-      if (existingReferences.get(node.id) !== node.documentId && !documents.has(node.documentId)) {
-        throw new OperationError({ code: 'invalid-input', message: 'Load the document before adding a canvas reference.' });
-      }
+    const packageEntry = findVaultEntry(get().vault?.entries ?? [], loaded.path);
+    const packageDocumentIds = new Set((packageEntry?.children ?? [])
+      .flatMap((entry) => entry.documentId ? [entry.documentId] : []));
+    for (const [documentId, document] of documents) {
+      if (parentFolderOf(document.path) === loaded.path) packageDocumentIds.add(documentId);
     }
+    assertPresentationOnlySave(loaded.file, { ...loaded.file, ...presentation }, packageDocumentIds);
     const reconciled = reconcileCanvasPresentation(presentation, loaded.file);
     if (reconciled === loaded.file) return loaded;
     const file = { ...loaded.file, ...reconciled, updatedAt: new Date().toISOString() };
@@ -128,32 +124,47 @@ export function createWorkspaceResources(api: YantraVaultApi, set: StoreApi<Vaul
     canvasCoordinator.update(id, file);
   }
 
-  function addCanvasDocument(canvasId: string, created: { path: string; document: DocumentFile }, position: { x: number; y: number }) {
+  function installCreatedDocument(destination: string, created: { path: string; document: DocumentFile; canvas?: CanvasFile; nodeId?: string }, options?: { blankNode?: boolean }) {
     const document = prepareDocument(created.path, created.document);
     const state = get();
     const vault = state.vault!;
     const documents = new Map(state.documents).set(document.file.id, document);
-    let entries = vault.entries;
-    if (!entries.some((entry) => entry.path === 'Unfiled')) entries = insertEntry(entries, '', { path: 'Unfiled', name: 'Unfiled', kind: 'folder', children: [] });
-    entries = insertEntry(entries, 'Unfiled', { path: created.path, name: `${document.file.title}.yantraD`, kind: 'document', documentId: document.file.id });
-    const current = state.canvases.get(canvasId)!.file;
-    const node = { id: crypto.randomUUID(), kind: 'document' as const, documentId: document.file.id,
-      x: Math.round(position.x - MARKDOWN_NODE_DEFAULT_WIDTH / 2),
-      y: Math.round(position.y - MARKDOWN_NODE_DEFAULT_HEIGHT / 2),
-      width: MARKDOWN_NODE_DEFAULT_WIDTH,
-      height: MARKDOWN_NODE_DEFAULT_HEIGHT,
-    };
-    const canvas = prepareCanvasChange(canvasId, { nodes: [...current.nodes, node], edges: current.edges,
-      groups: current.groups, layerOrder: [...current.layerOrder, node.id], viewport: current.viewport }, documents);
-    // Publish a complete addition: subscribers never see a reference without its
-    // document or an intermediate canvas with a missing sidebar entry.
+    const entry: VaultEntry = { path: created.path, name: `${document.file.title}.yantraD`, kind: 'document', documentId: document.file.id };
+    const entries = insertEntry(vault.entries, destination, entry);
+    const canvases = new Map(state.canvases);
+    let appearances = vault.appearances;
+    if (created.canvas) {
+      const loaded = canvases.get(created.canvas.id);
+      if (loaded && canvasCoordinator) {
+        const existing = new Map(loaded.file.nodes.map((node) => [node.id, node]));
+        const nodes = created.canvas.nodes.map((node) => existing.get(node.id) ?? node);
+        const file = {
+          ...created.canvas,
+          nodes,
+          viewport: loaded.file.viewport,
+          edges: loaded.file.edges,
+          groups: loaded.file.groups,
+        };
+        canvases.set(created.canvas.id, { ...loaded, file, path: destination, documentErrors: loaded.documentErrors });
+        try {
+          canvasCoordinator.replaceCleanSnapshot(created.canvas.id, file);
+        } catch {
+          canvasCoordinator.update(created.canvas.id, file);
+        }
+      }
+      if (created.nodeId) {
+        appearances = [...appearances, { canvasId: created.canvas.id, canvasPath: destination, documentId: document.file.id, nodeId: created.nodeId }];
+      }
+    }
     set({
       documents,
-      vault: { ...vault, entries },
-      canvases: new Map(state.canvases).set(canvasId, canvas),
-      blankNodeEditTarget: { canvasId, nodeId: node.id, requestId: crypto.randomUUID() },
+      canvases,
+      vault: { ...vault, entries, appearances },
+      blankNodeEditTarget: options?.blankNode && created.canvas && created.nodeId
+        ? { canvasId: created.canvas.id, nodeId: created.nodeId, requestId: crypto.randomUUID() }
+        : state.blankNodeEditTarget,
     });
-    canvasCoordinator!.update(canvasId, canvas.file);
+    return document;
   }
 
   function documentEntry(entries: VaultEntry[], id: string): VaultEntry | undefined {
@@ -255,6 +266,7 @@ export function createWorkspaceResources(api: YantraVaultApi, set: StoreApi<Vaul
       Object.assign(update, { activeDocumentId: null, activePath: null, loadState: 'idle' });
     }
     set(update);
+    syncTabsAfterVaultUpdate();
   }
 
   function applyEntryChange(change: VaultEntryChange) {
@@ -275,9 +287,14 @@ export function createWorkspaceResources(api: YantraVaultApi, set: StoreApi<Vaul
         documents.set(id, { ...loaded, path, file, reloadRevision: loaded.reloadRevision + Number(bodyChanged) });
       }
     }
+    const canvasChanges = [
+      ...(change.canvases ?? []),
+      ...(change.canvas && !(change.canvases ?? []).some((file) => file.id === change.canvas!.id) ? [change.canvas] : []),
+    ];
+    const updatedCanvasIds = new Set(canvasChanges.map((file) => file.id));
     let canvases = current.canvases;
     for (const [id, loaded] of canvases) {
-      const incoming = change.canvas?.id === id ? change.canvas : loaded.file;
+      const incoming = canvasChanges.find((file) => file.id === id) ?? loaded.file;
       const { nodes, edges, groups, layerOrder, viewport } = reconcileCanvasPresentation(incoming, loaded.file);
       const file = incoming === loaded.file ? loaded.file : { ...incoming, nodes, edges, groups, layerOrder, viewport };
       const path = relocatedPath(loaded.path, change.from, change.to);
@@ -291,16 +308,27 @@ export function createWorkspaceResources(api: YantraVaultApi, set: StoreApi<Vaul
     const nextOrder = change.sidebarOrder ?? currentOrder?.map((path) => relocatedPath(path, change.from, change.to));
     const sidebarOrder = nextOrder && currentOrder && nextOrder.length === currentOrder.length
       && nextOrder.every((path, index) => path === currentOrder[index]) ? currentOrder : nextOrder;
-    const appearances = vault.appearances.map((appearance) => {
-      const canvasPath = relocatedPath(appearance.canvasPath, change.from, change.to);
-      return canvasPath === appearance.canvasPath ? appearance : { ...appearance, canvasPath };
-    });
+    const nextEntries = change.from === change.to ? vault.entries : relocateEntries(vault.entries, change.from, change.to);
+    let appearances = vault.appearances
+      .filter((appearance) => !updatedCanvasIds.has(appearance.canvasId))
+      .map((appearance) => {
+        const canvasPath = relocatedPath(appearance.canvasPath, change.from, change.to);
+        return canvasPath === appearance.canvasPath ? appearance : { ...appearance, canvasPath };
+      });
+    for (const canvas of canvasChanges) {
+      const canvasPath = flattenVaultEntries(nextEntries).find((entry) => entry.kind === 'canvas' && entry.canvasId === canvas.id)?.path;
+      if (!canvasPath) continue;
+      for (const node of canvas.nodes) {
+        appearances.push({ canvasId: canvas.id, canvasPath, documentId: node.documentId, nodeId: node.id });
+      }
+    }
     set({ documents, canvases, error: change.warning ?? current.error,
       activePath: current.activePath ? relocatedPath(current.activePath, change.from, change.to) : null,
       vault: { ...vault,
         metadata: sidebarOrder === currentOrder ? vault.metadata : { ...vault.metadata, sidebarOrder },
-        entries: change.from === change.to ? vault.entries : relocateEntries(vault.entries, change.from, change.to),
-        appearances: appearances.every((appearance, index) => appearance === vault.appearances[index])
+        entries: nextEntries,
+        appearances: appearances.length === vault.appearances.length
+          && appearances.every((appearance, index) => appearance === vault.appearances[index])
           ? vault.appearances : appearances },
     });
     syncTabsAfterVaultUpdate();
@@ -310,6 +338,6 @@ export function createWorkspaceResources(api: YantraVaultApi, set: StoreApi<Vaul
     for (const change of changes) applyEntryChange(change);
   }
 
-  return { initialize, flushResources, prepareDocument, prepareCanvas, register, registerCanvas, commitCanvas, commitCanvasViewport, addCanvasDocument, documentEntry, loadCanvasDocuments, applyEntryChange, applyEntryChanges, applyCanvasDeletion,
+  return { initialize, flushResources, prepareDocument, prepareCanvas, register, registerCanvas, commitCanvas, commitCanvasViewport, installCreatedDocument, documentEntry, loadCanvasDocuments, applyEntryChange, applyEntryChanges, applyCanvasDeletion,
     get documentSaves() { return coordinator; }, get canvasSaves() { return canvasCoordinator; } };
 }

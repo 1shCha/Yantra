@@ -3,12 +3,23 @@ import { OperationError, type OperationFailure } from './operation-result';
 import { createEmptyTiptapDoc, tiptapDocSchema } from './tiptap-document';
 import { vaultNameSchema, type CanvasAppearance } from './vault-organization';
 
+export const VAULT_FORMAT_VERSION = 2;
+
 export const vaultMetadataSchema = z.strictObject({
   sidebarOrder: z.array(z.string()).optional(),
-  formatVersion: z.literal(1),
+  formatVersion: z.literal(VAULT_FORMAT_VERSION),
   id: z.uuid(),
   createdAt: z.iso.datetime(),
 });
+
+export function decodeVaultMetadata(raw: string): VaultMetadata {
+  const value: unknown = JSON.parse(raw);
+  const version = z.object({ formatVersion: z.number() }).parse(value);
+  if (version.formatVersion !== VAULT_FORMAT_VERSION) {
+    throw new OperationError({ code: 'unsupported-format', message: `Unsupported vault format version: ${version.formatVersion}` });
+  }
+  return vaultMetadataSchema.parse(value);
+}
 
 export const documentFileSchema = z.strictObject({
   formatVersion: z.literal(1),

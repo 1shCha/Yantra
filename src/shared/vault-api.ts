@@ -19,12 +19,13 @@ export interface VaultOperations {
   restore: () => Promise<VaultSnapshot | null>;
   choose: (create: boolean) => Promise<VaultSnapshot | null>;
   readDocument: (sessionId: string, path: string, mode?: 'inspect' | 'accept-disk') => Promise<DocumentFile>;
-  createDocument: (sessionId: string, folder: string) => Promise<{ path: string; document: DocumentFile }>;
+  createDocument: (sessionId: string, destination: string, position?: { x: number; y: number }) => Promise<{
+    path: string; document: DocumentFile; canvas?: CanvasFile; nodeId?: string;
+  }>;
   saveDocument: (sessionId: string, document: DocumentFile, overwrite?: boolean) => Promise<{ savedAt: string }>;
   readCanvas: (sessionId: string, path: string, mode?: 'inspect' | 'accept-disk') => Promise<CanvasFile>;
   createCanvas: (sessionId: string, folder: string) => Promise<{ path: string; canvas: CanvasFile }>;
   saveCanvas: (sessionId: string, canvas: CanvasFile, overwrite?: boolean) => Promise<{ savedAt: string }>;
-  createNodeDocument: (sessionId: string) => Promise<{ path: string; document: DocumentFile }>;
   createFolder: (sessionId: string, folder: string, name: string) => Promise<{ path: string }>;
   renameEntry: (sessionId: string, path: string, name: string, documentTitle?: string) => Promise<VaultEntryChange>;
   moveEntry: (sessionId: string, path: string, folder: string, placement?: EntryPlacement) => Promise<VaultEntryChange>;
@@ -42,7 +43,6 @@ export const VAULT_CHANNELS = {
   RESTORE: 'vault:restore', CHOOSE: 'vault:choose',
   READ_DOCUMENT: 'vault:read-document', CREATE_DOCUMENT: 'vault:create-document', SAVE_DOCUMENT: 'vault:save-document',
   READ_CANVAS: 'vault:read-canvas', CREATE_CANVAS: 'vault:create-canvas', SAVE_CANVAS: 'vault:save-canvas',
-  CREATE_NODE_DOCUMENT: 'vault:create-node-document',
   CREATE_FOLDER: 'vault:create-folder', RENAME_ENTRY: 'vault:rename-entry', MOVE_ENTRY: 'vault:move-entry',
   MOVE_ENTRIES: 'vault:move-entries',
 } as const;

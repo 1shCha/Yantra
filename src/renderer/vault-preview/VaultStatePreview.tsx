@@ -41,7 +41,7 @@ function PreviewDialog({ title, children, onDismiss }: { title: string; children
 const menuActions = {
   'Menu - vault': [{ label: 'Create Vault', icon: FolderPlus }, { label: 'Open Vault', icon: FolderOpen }],
   'Menu - document': [{ label: 'Rename', icon: Pencil }, { label: 'Move', icon: FolderInput }, { label: 'Reveal on Canvas', icon: LocateFixed }, { label: 'Delete Document', icon: Trash2 }],
-  'Menu - canvas': [{ label: 'Rename', icon: Pencil }, { label: 'Move', icon: FolderInput }, { label: 'Delete Canvas', icon: Trash2 }],
+  'Menu - canvas': [{ label: 'New Document', icon: FilePlus2 }, { label: 'Rename', icon: Pencil }, { label: 'Move', icon: FolderInput }, { label: 'Move to Trash', icon: Trash2 }],
   'Menu - folder': [{ label: 'New Document', icon: FilePlus2 }, { label: 'New Canvas', icon: PanelsTopLeft }, { label: 'New Folder', icon: FolderPlus }, { label: 'Rename', icon: Pencil }, { label: 'Move', icon: FolderInput }, { label: 'Delete Folder', icon: Trash2 }],
   'Menu - node': [{ label: 'Open Document', icon: ExternalLink }, { label: 'Remove from Canvas', icon: Unlink }],
 };
@@ -69,7 +69,7 @@ function ActionMenu({ state, onDismiss }: { state: keyof typeof menuActions; onD
     const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
     buttons[index]?.focus();
   }}>
-    {menuActions[state].map(({ label, icon: Icon }) => <button role="menuitem" tabIndex={-1} key={label} onClick={onDismiss} data-danger={label.startsWith('Delete')}><Icon size={15} />{label}</button>)}
+    {menuActions[state].map(({ label, icon: Icon }) => <button role="menuitem" tabIndex={-1} key={label} onClick={onDismiss} data-danger={label.includes('Trash') || label.startsWith('Delete')}><Icon size={15} />{label}</button>)}
   </div>;
 }
 
@@ -114,8 +114,8 @@ export function VaultOverlayPreview({ state, onDismiss }: { state: string; onDis
   const folder = state === 'Delete Folder - not empty';
   const doc = state === 'Delete Document';
   return <PreviewDialog title={folder ? 'Folder is not empty' : doc ? 'Delete Reading_notes?' : 'Delete Overview?'} onDismiss={onDismiss}>
-    <p>{folder ? 'Research contains files. Move or delete its contents before deleting this folder.' : doc ? 'Reading_notes.yantraD will move to system Trash. Its node and connected edges will be removed from Overview.' : 'Overview.yantraC will move to system Trash. Its documents will remain in your vault.'}</p>
-    {!folder && <p className="vault-dialog__hint">{doc ? 'The file can be recovered from system Trash. Canvas placement is not restored automatically.' : 'The canvas file can be recovered from system Trash.'}</p>}
+    <p>{folder ? 'Research contains files. Move or delete its contents before deleting this folder.' : doc ? 'Reading_notes.yantraD will move to system Trash. Its node and connected edges will be removed from Overview.' : 'This board and its notes will move to Trash.'}</p>
+    {!folder && <p className="vault-dialog__hint">{doc ? 'The file can be recovered from system Trash. Canvas placement is not restored automatically.' : 'The board and notes can be recovered from system Trash.'}</p>}
     <div className="vault-dialog__footer"><button className="vault-dialog__button" onClick={onDismiss}>{folder ? 'Close' : 'Cancel'}</button>{!folder && <button className="vault-dialog__button vault-dialog__button--danger" onClick={onDismiss}>Move to Trash</button>}</div>
   </PreviewDialog>;
 }

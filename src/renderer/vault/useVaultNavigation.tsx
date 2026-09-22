@@ -18,8 +18,10 @@ import { VaultContextMenu, VaultDeleteDialog, VaultMoveDialog, VaultNameDialog, 
 import {
   FILE_EXTENSIONS,
   entryTitle,
+  collectPackagePaths,
   expandedWithAncestors,
   findVaultEntry,
+  listDocumentMoveDestinations,
   listFolders,
   locationLabel,
   movedPath,
@@ -39,7 +41,7 @@ function treeEntries(entries: VaultEntry[]): VaultTreeEntry[] {
     const cached = treeEntryCache.get(entry);
     if (cached) return cached;
     const row = { id: entry.path, resourceId: entry.error ? undefined : entry.documentId ?? entry.canvasId, name: entry.name, kind: entry.kind, error: entry.error,
-      children: entry.children && treeEntries(entry.children) };
+      unavailable: !!entry.error, children: entry.children && treeEntries(entry.children) };
     treeEntryCache.set(entry, row);
     return row;
   });
@@ -130,11 +132,13 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
 
   const createDocumentAtRoot = useCallback(() => createDocument(''), [createDocument]);
   const createCanvasAtRoot = useCallback(() => createCanvas(''), [createCanvas]);
+  const destinationIsPackage = findVaultEntry(state.vault?.entries ?? [], folder)?.kind === 'canvas';
 
   const openFile = useCallback((path: string) => {
-    if (path.endsWith('.yantraC')) void state.openCanvas(path);
+    const entry = state.vault ? findVaultEntry(state.vault.entries, path) : undefined;
+    if (entry?.kind === 'canvas') void state.openCanvas(path);
     else void state.openDocument(path);
-  }, [state.openCanvas, state.openDocument]);
+  }, [state.openCanvas, state.openDocument, state.vault]);
 
   /** After a rename or move, remaps local sidebar paths, expands the destination chain,
       and marks the organized item selected. */
@@ -229,6 +233,12 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
     const rename: VaultMenuItem = { label: 'Rename', icon: Pencil, disabled, onSelect: () => setDialog({ kind: 'rename', path: target.path, entryKind: target.entryKind }) };
     const move: VaultMenuItem = { label: 'Move To…', icon: FolderInput, disabled, onSelect: () => setDialog({ kind: 'move', path: target.path, entryKind: target.entryKind }) };
     const trash: VaultMenuItem = { label: 'Move to Trash', icon: Trash2, disabled, danger: true, onSelect: () => setDialog({ kind: 'delete', path: target.path, entryKind: target.entryKind }) };
+    if (target.entryKind === 'canvas') {
+      return [
+        { label: 'New Document', icon: FilePlus2, disabled, onSelect: () => createDocument(target.path) },
+        rename, move, trash,
+      ];
+    }
     if (target.entryKind !== 'folder') return [rename, move, trash];
     return [
       { label: 'New Document', icon: FilePlus2, disabled, onSelect: () => createDocument(target.path) },
@@ -275,17 +285,21 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
     const before = store.getState();
     const target = before.activeTabId ?? undefined;
     const existing = before.tabs.find((tab) => tab.path === path);
-    selectRoot();
+    const entry = before.vault ? findVaultEntry(before.vault.entries, path) : undefined;
+    const nextFolder = entry?.kind === 'canvas' ? path : entry?.kind === 'document' ? parentFolderOf(path) : '';
+    setHighlight(null);
+    setDestination({ session, folder: nextFolder, expanded: expandedWithAncestors(expanded, nextFolder) });
     openFile(path);
     clickGesture.current = count === 1 ? { session, path, target,
       provisional: existing ? undefined : store.getState().activeTabId ?? undefined } : null;
-  }, [selectRoot, openFile, session, store]);
+  }, [openFile, session, store, expanded]);
   const replaceEntry = useCallback((path: string) => {
     const gesture = clickGesture.current;
     clickGesture.current = null;
     if (!gesture || gesture.session !== session || gesture.path !== path || !gesture.provisional) return;
     const options = { replaceTabId: gesture.target, provisionalTabId: gesture.provisional };
-    if (path.endsWith('.yantraC')) void store.getState().openCanvas(path, options);
+    const entry = store.getState().vault ? findVaultEntry(store.getState().vault!.entries, path) : undefined;
+    if (entry?.kind === 'canvas') void store.getState().openCanvas(path, options);
     else void store.getState().openDocument(path, options);
   }, [session, store]);
   const toggleFolder = useCallback((path: string) => {
@@ -326,6 +340,7 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
       onCreateDocument={() => createDocument()}
       onCreateCanvas={() => createCanvas()}
       onCreateFolder={createFolderInFolder}
+      disableContainerCreation={destinationIsPackage}
       onMoveEntry={moveByDrag}
       onMoveEntries={moveGroupByDrag}
       onEntryMenu={openEntryMenu}
@@ -356,7 +371,7 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
           ? documentTitle(store.getState().documents.get(dialogEntry.documentId)!.file.doc)
           : entryTitle(dialogEntry.name, dialog.entryKind).replaceAll('_', ' ').replaceAll('-', ' '))
         : entryTitle(dialogEntry.name, dialog.entryKind)}
-      extension={FILE_EXTENSIONS[dialog.entryKind]}
+      extension={dialog.entryKind === 'document' ? FILE_EXTENSIONS.document : ''}
       location={locationLabel(state.vault.name, parentFolderOf(dialog.path))} busy={state.busy}
       onSubmit={(name) => {
         const filename = dialog.entryKind === 'document' ? titleFilename(name) : name;
@@ -366,8 +381,11 @@ export function useVaultNavigation(store: ReturnType<typeof createVaultWorkspace
       onDismiss={() => setDialog(null)} />}
     {dialog?.kind === 'move' && state.vault && dialogEntry && <VaultMoveDialog
       title={`Move ${entryTitle(dialogEntry.name, dialog.entryKind)}`} vaultName={state.vault.name}
-      folders={listFolders(state.vault.entries)}
+      folders={dialog.entryKind === 'document'
+        ? listDocumentMoveDestinations(state.vault.entries)
+        : listFolders(state.vault.entries)}
       source={{ path: dialog.path, kind: dialog.entryKind }} busy={state.busy}
+      packages={collectPackagePaths(state.vault.entries)}
       onSubmit={(target) => submitOrganize(() => state.moveEntry(dialog.path, target),
         () => revealOrganized(dialog.path, movedPath(dialog.path, target), target))}
       onDismiss={() => setDialog(null)} />}

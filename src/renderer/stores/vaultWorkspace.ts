@@ -10,10 +10,10 @@ import { cancelled, captureOperation, failure, OperationError, operationFailure,
 import { getSchema } from '@tiptap/core';
 import type { YantraVaultApi } from '../../shared/vault-api';
 import { documentFileSchema, type DocumentFile, type VaultEntry, type VaultSnapshot } from '../../shared/vault-format';
-import { canvasFileSchema, removeCanvasNodes } from '../../shared/vault-canvas';
+import { canvasFileSchema } from '../../shared/vault-canvas';
 import { documentSchemaExtensions } from '../editor/tiptap-schema';
 import { insertEntry as addEntry } from '../../shared/vault-organization';
-import { MARKDOWN_NODE_DEFAULT_HEIGHT, MARKDOWN_NODE_DEFAULT_WIDTH } from '../canvas/react-flow-mapping';
+import { UNSUPPORTED_PACKAGE_OPERATION } from '../../shared/vault-packages';
 
 function findEntry(entries: VaultEntry[], path: string): VaultEntry | undefined {
   for (const entry of entries) {
@@ -100,6 +100,43 @@ export function createVaultWorkspace(api: YantraVaultApi, tabStorage: TabStorage
       return tab ? openTab(get(), tab, options) : {};
     }
 
+    async function markInterruptedPackage(session: string, packagePath: string) {
+      if (!packagePath) return;
+      try {
+        const snapshot = await api.refresh(session).then(unwrapOperation);
+        const current = get();
+        if (current.vault?.sessionId !== session) return;
+        const entry = findEntry(snapshot.entries, packagePath);
+        const canvases = new Map(current.canvases);
+        const documents = new Map(current.documents);
+        if (entry?.error) {
+          if (entry.canvasId) canvases.delete(entry.canvasId);
+          for (const [id, loaded] of documents) {
+            if (loaded.path === packagePath || loaded.path.startsWith(`${packagePath}/`)) documents.delete(id);
+          }
+        }
+        const viewingPackage = current.activePath === packagePath || current.activePath?.startsWith(`${packagePath}/`);
+        const next = {
+          vault: { ...current.vault, entries: snapshot.entries, appearances: snapshot.appearances },
+          canvases,
+          documents,
+        };
+        if (entry?.error && viewingPackage) {
+          set({
+            ...next,
+            activeCanvasId: null,
+            activeDocumentId: null,
+            loadState: 'error',
+            error: entry.error,
+          });
+          return;
+        }
+        set(next);
+      } catch {
+        /* Keep the original create failure. */
+      }
+    }
+
     return {
       ...createOrganizationActions(api, set, get, resources, operations, syncTabsAfterVaultUpdate),
       tabs: [], activeTabId: null,
@@ -161,24 +198,8 @@ export function createVaultWorkspace(api: YantraVaultApi, tabStorage: TabStorage
         });
       },
       retryRecovery: () => replaceFromDisk((vault) => api.retryRecovery(vault.sessionId)),
-      removeFromCanvas(canvasId, nodeIds) {
-        return organize(async () => {
-          const loaded = get().canvases.get(canvasId);
-          if (!loaded) throw new OperationError({ code: 'invalid-input', message: 'Open the canvas before removing its nodes.' });
-          const file = removeCanvasNodes(loaded.file, new Set(nodeIds));
-          const { nodes, edges, groups, layerOrder, viewport } = file;
-          commitCanvas(canvasId, { nodes, edges, groups, layerOrder, viewport });
-          await resources.canvasSaves!.flush(canvasId);
-          const { revealTarget, blankNodeEditTarget } = get();
-          const clearReveal = revealTarget?.canvasId === canvasId && nodeIds.includes(revealTarget.nodeId);
-          const clearBlankEdit = blankNodeEditTarget?.canvasId === canvasId && nodeIds.includes(blankNodeEditTarget.nodeId);
-          if (clearReveal || clearBlankEdit) {
-            set({
-              revealTarget: clearReveal ? null : revealTarget,
-              blankNodeEditTarget: clearBlankEdit ? null : blankNodeEditTarget,
-            });
-          }
-        });
+      removeFromCanvas() {
+        return Promise.resolve(failure(new OperationError({ code: 'invalid-input', message: UNSUPPORTED_PACKAGE_OPERATION })));
       },
       resolveConflict(kind, id, choice) {
         const vault = get().vault;
@@ -285,19 +306,25 @@ export function createVaultWorkspace(api: YantraVaultApi, tabStorage: TabStorage
           const vault = get().vault;
           if (!vault || vault.sessionId !== session) return cancelled('superseded');
           if (vault.recovery) throw new OperationError({ code: 'recovery-required', message: vault.recovery.message });
-          if (folder && findEntry(vault.entries, folder)?.kind !== 'folder') throw new OperationError({ code: 'invalid-input', message: 'Choose a valid destination folder.' });
-          const result = await api.createDocument(session, folder).then(unwrapOperation);
-          const document = resources.prepareDocument(result.path, result.document);
+          const destination = folder ? findEntry(vault.entries, folder) : undefined;
+          if (folder && (!destination || destination.error || (destination.kind !== 'folder' && destination.kind !== 'canvas'))) {
+            throw new OperationError({ code: 'invalid-input', message: 'Choose a valid destination folder.' });
+          }
+          let result;
+          try {
+            result = await api.createDocument(session, folder).then(unwrapOperation);
+          } catch (error) {
+            await markInterruptedPackage(session, folder);
+            throw error;
+          }
+          const document = resources.installCreatedDocument(folder, result);
           const current = get();
           const entry: VaultEntry = { path: result.path, name: `${document.file.title}.yantraD`, kind: 'document', documentId: document.file.id };
-          const update: Partial<VaultWorkspaceState> = {
-            documents: new Map(current.documents).set(document.file.id, document),
-            vault: { ...current.vault!, entries: addEntry(current.vault!.entries, folder, entry) },
-          };
-          if (navigation === requests.navigation) Object.assign(update, {
-            ...openTab(current, tabForEntry(entry)!), activePath: result.path, activeDocumentId: document.file.id, activeCanvasId: null, revealTarget: null, blankNodeEditTarget: null, loadState: 'ready',
-          });
-          set(update);
+          if (navigation === requests.navigation) {
+            set({
+              ...openTab(current, tabForEntry(entry)!), activePath: result.path, activeDocumentId: document.file.id, activeCanvasId: null, revealTarget: null, blankNodeEditTarget: null, loadState: 'ready',
+            });
+          }
           if (navigation !== requests.navigation) return cancelled('superseded');
         });
       },
@@ -388,7 +415,7 @@ export function createVaultWorkspace(api: YantraVaultApi, tabStorage: TabStorage
           const result = await api.createCanvas(session, folder).then(unwrapOperation);
           const canvas = resources.prepareCanvas(result.path, result.canvas);
           const current = get();
-          const entry: VaultEntry = { path: result.path, name: `${canvas.file.title}.yantraC`, kind: 'canvas', canvasId: canvas.file.id };
+          const entry: VaultEntry = { path: result.path, name: canvas.file.title, kind: 'canvas', canvasId: canvas.file.id, children: [] };
           const update: Partial<VaultWorkspaceState> = {
             canvases: new Map(current.canvases).set(canvas.file.id, canvas),
             vault: { ...current.vault!, entries: addEntry(current.vault!.entries, folder, entry) },
@@ -401,12 +428,12 @@ export function createVaultWorkspace(api: YantraVaultApi, tabStorage: TabStorage
         });
       },
       updateCanvas(id, presentation) {
-        if (get().deletingCanvasId === id) return;
+        if (get().deletingDocumentIds.size && get().deletingCanvasId === id) return;
         if (get().busy || get().vault?.recovery) throw new OperationError({ code: 'invalid-input', message: 'Canvas editing is paused during a vault operation or recovery.' });
         commitCanvas(id, presentation);
       },
       updateCanvasViewport(id, viewport) {
-        if (get().deletingCanvasId === id || get().vault?.recovery) return;
+        if ((get().deletingDocumentIds.size && get().deletingCanvasId === id) || get().vault?.recovery) return;
         resources.commitCanvasViewport(id, viewport);
       },
       registerViewportFlush(flush) {
@@ -420,13 +447,24 @@ export function createVaultWorkspace(api: YantraVaultApi, tabStorage: TabStorage
           const vault = get().vault;
           if (!vault || vault.sessionId !== session) return cancelled('superseded');
           if (vault.recovery) throw new OperationError({ code: 'recovery-required', message: vault.recovery.message });
-          if (!get().canvases.has(canvasId)) throw new OperationError({ code: 'unavailable', message: 'Canvas is not loaded.' });
+          const loaded = get().canvases.get(canvasId);
+          if (!loaded) throw new OperationError({ code: 'unavailable', message: 'Canvas is not loaded.' });
           if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) throw new OperationError({ code: 'invalid-input', message: 'Invalid node position.' });
-          // Creation is serialized, but existing editors and geometry remain live.
-          // Read the latest canvas when the durable document returns.
-          const result = await api.createNodeDocument(session).then(unwrapOperation);
-          resources.addCanvasDocument(canvasId, result, position);
-          await resources.canvasSaves!.flush(canvasId);
+          set({ deletingCanvasId: canvasId });
+          try {
+            for (const flush of viewportFlushes) flush();
+            await resources.canvasSaves!.flush(canvasId);
+            if (get().vault?.sessionId !== session) return cancelled('superseded');
+            try {
+              const result = await api.createDocument(session, loaded.path, position).then(unwrapOperation);
+              resources.installCreatedDocument(loaded.path, result, { blankNode: true });
+            } catch (error) {
+              await markInterruptedPackage(session, loaded.path);
+              throw error;
+            }
+          } finally {
+            if (get().deletingCanvasId === canvasId) set({ deletingCanvasId: null });
+          }
         });
       },
       async openNodeDocument(canvasId, nodeId) {
@@ -466,37 +504,8 @@ export function createVaultWorkspace(api: YantraVaultApi, tabStorage: TabStorage
         }
         return cancelled('superseded');
       },
-      async placeDocument(canvasId, documentId, position) {
-        const vault = get().vault;
-        if (!vault || get().busy) return blocked();
-        if (get().getAppearance(documentId)) return get().revealDocument(documentId);
-        const request = requests.begin();
-        const epoch = requests.generation;
-        const result = await runOperation(async () => {
-          if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) throw new OperationError({ code: 'invalid-input', message: 'Invalid node position.' });
-          if (!get().canvases.has(canvasId)) throw new OperationError({ code: 'invalid-input', message: 'Open the destination canvas first.' });
-          const entry = documentEntry(vault.entries, documentId);
-          if (!entry || entry.error) throw new OperationError({ code: 'invalid-input', message: 'Document is missing or unavailable.' });
-          await flushWorkspaceResources();
-          if (!get().documents.has(documentId)) {
-            const file = await api.readDocument(vault.sessionId, entry.path, 'accept-disk').then(unwrapOperation);
-            if (file.id !== documentId) throw new OperationError({ code: 'conflict', message: 'The document identity changed on disk.' });
-            register(entry.path, file);
-          }
-          const canvas = get().canvases.get(canvasId)!.file;
-          const node = { id: crypto.randomUUID(), kind: 'document' as const, documentId,
-            x: Math.round(position.x - MARKDOWN_NODE_DEFAULT_WIDTH / 2),
-            y: Math.round(position.y - MARKDOWN_NODE_DEFAULT_HEIGHT / 2),
-            width: MARKDOWN_NODE_DEFAULT_WIDTH,
-            height: MARKDOWN_NODE_DEFAULT_HEIGHT,
-          };
-          commitCanvas(canvasId, { nodes: [...canvas.nodes, node], edges: canvas.edges, groups: canvas.groups,
-            layerOrder: [...canvas.layerOrder, node.id], viewport: canvas.viewport });
-          await resources.canvasSaves!.flush(canvasId);
-        });
-        if (result.status !== 'success') return result;
-        if (epoch === requests.generation && request === requests.navigation) return get().revealDocument(documentId);
-        return cancelled('superseded');
+      async placeDocument() {
+        return failure(new OperationError({ code: 'invalid-input', message: UNSUPPORTED_PACKAGE_OPERATION }));
       },
     };
   });

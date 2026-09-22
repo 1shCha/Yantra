@@ -92,19 +92,20 @@ export function VaultNameDialog({ title, submitLabel, initialName, extension, lo
 }
 
 /** Moves an item into a chosen folder; the vault root is always listed as a destination. */
-export function VaultMoveDialog({ title, vaultName, folders, source, busy, onSubmit, onDismiss }: {
+export function VaultMoveDialog({ title, vaultName, folders, source, busy, onSubmit, onDismiss, packages = new Set() }: {
   title: string;
   vaultName: string;
   folders: readonly FolderOption[];
   source: { path: string; kind: VaultEntryKind };
   busy: boolean;
+  packages?: ReadonlySet<string>;
   onSubmit: (folder: string) => Promise<OperationResult>;
   onDismiss: () => void;
 }) {
   const parent = parentFolderOf(source.path);
   const options: FolderOption[] = [{ path: '', name: vaultName, depth: 0 }, ...folders.map((folder) => ({ ...folder, depth: folder.depth + 1 }))];
   const [destination, setDestination] = useState<string | null>(
-    () => options.find((option) => canDropInto(source, option.path))?.path ?? null,
+    () => options.find((option) => canDropInto(source, option.path, packages))?.path ?? null,
   );
   const [pending, setPending] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
@@ -130,7 +131,7 @@ export function VaultMoveDialog({ title, vaultName, folders, source, busy, onSub
       <p>Choose a destination folder.</p>
       <fieldset className="vault-destination-list" disabled={pending}><legend>Destination</legend>
         {options.map((option) => {
-          const valid = canDropInto(source, option.path);
+          const valid = canDropInto(source, option.path, packages);
           return <label key={option.path || '/'} style={{ paddingLeft: 4 + option.depth * 14 }} title={option.path || `${vaultName} (vault root)`}>
             <input type="radio" name="vault-move-destination" value={option.path} checked={destination === option.path}
               disabled={!valid} autoFocus={destination === option.path} onChange={() => setDestination(option.path)} />
@@ -188,7 +189,7 @@ export function VaultDeleteDialog({ name, kind, busy, recovering = false, onSubm
       <p className="vault-delete-name">{name}</p>
       <p className="vault-dialog__hint">{kind === 'document'
         ? 'This document will move to Trash, and its appearances will be removed from canvases.'
-        : kind === 'canvas' ? 'This canvas will move to Trash. Its documents will stay in the vault.'
+        : kind === 'canvas' ? 'This board and its notes will move to Trash.'
           : 'This folder and all its contents will move to Trash. Documents inside it will also be removed from canvases outside the folder.'}</p>
       {operationError !== null && <p className="vault-dialog__error" role="alert">{operationError}</p>}
       <div className="vault-dialog__footer">

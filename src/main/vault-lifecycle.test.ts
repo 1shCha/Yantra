@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VaultRepository } from './vault-repository';
 import { createVaultCanvasSession } from '../renderer/vault/vault-canvas-session';
 import { createVaultWorkspace } from '../renderer/stores/vaultWorkspace';
+import { packageLayoutPath } from '../shared/vault-packages';
 import { newCanvas, removeCanvasNodes } from '../shared/vault-canvas';
 import { newDocument } from '../shared/vault-format';
 import { tiptapDocFromPlainText } from '../shared/tiptap-document';
@@ -39,10 +40,10 @@ describe('vault lifecycle', () => {
       deleteCanvasNodes: (_session, canvasId, nodeIds) => repo.deleteCanvasNodes(canvasId, nodeIds),
       restore: () => repo.scan(), choose: async () => null, refresh: () => repo.refresh(),
       retryRecovery: () => repo.retryRecovery(), deleteEntry: (_session, relative) => repo.deleteEntry(relative),
-      readDocument: (_session, relative, mode) => repo.readDocument(relative, mode), createDocument: (_session, folder) => repo.createDocument(folder),
+      readDocument: (_session, relative, mode) => repo.readDocument(relative, mode), createDocument: (_session, folder, position) => repo.createDocument(folder, position),
       saveDocument: (_session, file, overwrite) => repo.saveDocument(file, overwrite),
       readCanvas: (_session, relative, mode) => repo.readCanvas(relative, mode), createCanvas: (_session, folder) => repo.createCanvas(folder),
-      saveCanvas: (_session, file, overwrite) => repo.saveCanvas(file, overwrite), createNodeDocument: () => repo.createNodeDocument(),
+      saveCanvas: (_session, file, overwrite) => repo.saveCanvas(file, overwrite),
       createFolder: (_session, folder, name) => repo.createFolder(folder, name),
       renameEntry: (_session, relative, name, title) => repo.renameEntry(relative, name, title), moveEntry: (_session, relative, folder) => repo.moveEntry(relative, folder),
       moveEntries: (_session, paths, folder) => repo.moveEntries(paths, folder),
@@ -76,12 +77,12 @@ describe('vault lifecycle', () => {
     expect(result.layerOrder).toEqual([nodes[1]!.id, nodes[2]!.id]);
   });
 
-  it('removes an appearance while preserving the document and allowing placement again', async () => {
+  it('rejects removing a node from a package or placing an existing document onto it', async () => {
     const { canvasId, node, document } = await canvasAndDocument();
-    await store.getState().removeFromCanvas(canvasId, [node.id]);
-    expect(store.getState().getAppearance(node.documentId)).toBeNull();
+    expect((await store.getState().removeFromCanvas(canvasId, [node.id])).status).toBe('failure');
+    expect(store.getState().getAppearance(node.documentId)?.nodeId).toBe(node.id);
     expect(await repo.readDocument(document.path)).toEqual(document.file);
-    await store.getState().placeDocument(canvasId, node.documentId, { x: 0, y: 0 });
+    expect((await store.getState().placeDocument(canvasId, node.documentId, { x: 0, y: 0 })).status).toBe('failure');
     expect(store.getState().canvases.get(canvasId)?.file.nodes).toHaveLength(1);
   });
 
@@ -175,7 +176,7 @@ describe('vault lifecycle', () => {
       expect(activeChanges).toEqual([]);
       expect(session.flow.getState().nodes[0]).toBe(survivor);
       expect(store.getState().documents.get(document.file.id)).toBe(document);
-      expect(store.getState().vault!.entries.find((item) => item.path === canvas.path)).toBe(entry);
+      expect(store.getState().vault!.entries.find((item) => item.path === canvas.path)?.path).toBe(entry?.path);
       session.flow.getState().setNodePosition(survivor.id, { x: 800, y: 300 });
       store.getState().updateDocument(document.file.id, tiptapDocFromPlainText('Surviving draft'));
       await store.getState().flush();
@@ -230,12 +231,13 @@ describe('vault lifecycle', () => {
     expect(trashed).toHaveLength(2);
   });
 
-  it('deleting a canvas preserves its documents and closes its active view', async () => {
+  it('deleting a canvas package closes its view and trashes its documents', async () => {
     const { canvas, document } = await canvasAndDocument();
     await store.getState().deleteEntry(canvas.path);
     expect(store.getState().activePath).toBeNull();
-    expect(await repo.readDocument(document.path)).toEqual(document.file);
+    await expect(repo.readDocument(document.path)).rejects.toThrow();
     expect(store.getState().vault?.appearances).toEqual([]);
+    expect(trashed).toHaveLength(1);
   });
 
   it('waits for an already active save before deleting its document', async () => {
@@ -270,38 +272,41 @@ describe('vault lifecycle', () => {
     expect((await fs.stat(trashed[0]!)).isDirectory()).toBe(true);
   });
 
-  it('trashes a nested folder once, flushes its drafts and cleans only outside canvas references', async () => {
-    const { document, canvas, canvasId } = await canvasAndDocument();
+  it('trashes a nested folder once, including packages and leftover files', async () => {
+    const standalone = await store.getState().createDocument();
+    expect(standalone.status).toBe('success');
+    const documentId = store.getState().activeDocumentId!;
+    const documentPath = store.getState().documents.get(documentId)!.path;
     await store.getState().createFolder('', 'Archive');
     await store.getState().createFolder('Archive', 'Nested');
-    await store.getState().moveEntry(document.path, 'Archive/Nested');
+    expect((await store.getState().moveEntry(documentPath, 'Archive/Nested')).status).toBe('success');
     const insideCanvas = await repo.createCanvas('Archive');
+    await store.getState().refresh();
+    await store.getState().openDocument(`Archive/Nested/${path.basename(documentPath)}`);
     await fs.writeFile(path.join(root, 'Archive/Nested/notes.txt'), 'Extra file');
     const outside = path.join(temporary, 'outside.txt');
     await fs.writeFile(outside, 'Leave untouched');
     await fs.symlink(outside, path.join(root, 'Archive/link'));
-    store.getState().updateDocument(document.file.id, tiptapDocFromPlainText('Draft before folder deletion'));
+    store.getState().updateDocument(documentId, tiptapDocFromPlainText('Draft before folder deletion'));
     expect((await store.getState().deleteEntry('Archive')).status).toBe('success');
     expect(trashed).toHaveLength(1);
-    expect(await fs.readFile(path.join(trashed[0]!, 'Nested', path.basename(document.path)), 'utf8')).toContain('Draft before folder deletion');
+    expect(await fs.readFile(path.join(trashed[0]!, 'Nested', path.basename(documentPath)), 'utf8')).toContain('Draft before folder deletion');
     expect(await fs.readFile(path.join(trashed[0]!, 'Nested/notes.txt'), 'utf8')).toBe('Extra file');
-    expect(await fs.readFile(path.join(trashed[0]!, path.basename(insideCanvas.path)), 'utf8')).toContain(insideCanvas.canvas.id);
+    expect(await fs.readFile(path.join(trashed[0]!, insideCanvas.path.split('/').pop()!, `${insideCanvas.canvas.title}.yantraC`), 'utf8')).toContain(insideCanvas.canvas.id);
     expect(await fs.readFile(outside, 'utf8')).toBe('Leave untouched');
-    expect((await repo.readCanvas(canvas.path)).nodes).toEqual([]);
-    expect(store.getState().activeCanvasId).toBe(canvasId);
-    expect(store.getState().documents.has(document.file.id)).toBe(false);
+    expect(store.getState().documents.has(documentId)).toBe(false);
     await store.getState().flush();
     await expect(fs.stat(path.join(root, 'Archive'))).rejects.toThrow();
   });
 
   it('stops folder recovery after content changes, then safely retries unchanged content', async () => {
-    const { document, canvas } = await canvasAndDocument();
     await store.getState().createFolder('', 'Archive');
-    await store.getState().moveEntry(document.path, 'Archive');
+    const created = await repo.createDocument('Archive');
+    await store.getState().refresh();
     await fs.writeFile(path.join(root, 'Archive/notes.txt'), 'Original');
     failTrash = true;
     expect((await store.getState().deleteEntry('Archive')).status).toBe('recovery-required');
-    expect((await repo.readCanvas(canvas.path)).nodes).toEqual([]);
+    expect(await repo.readDocument(created.path)).toEqual(created.document);
     await fs.writeFile(path.join(root, 'Archive/notes.txt'), 'Changed');
     failTrash = false;
     failTrashAfter = Infinity;
@@ -310,7 +315,7 @@ describe('vault lifecycle', () => {
     await fs.writeFile(path.join(root, 'Archive/notes.txt'), 'Original');
     expect((await store.getState().retryRecovery()).status).toBe('success');
     expect(trashed).toHaveLength(1);
-    expect((await repo.readCanvas(canvas.path)).nodes).toEqual([]);
+    await expect(repo.readDocument(created.path)).rejects.toThrow();
   });
 
   it('refuses folder deletion when documents cannot be identified safely', async () => {
@@ -366,17 +371,16 @@ describe('vault lifecycle', () => {
     await expect(fs.stat(path.join(root, relative))).rejects.toThrow();
   });
 
-  it('refresh picks up external moves, content changes, missing references and unsupported files', async () => {
+  it('refresh picks up external package moves and unsupported files, and marks broken packages invalid', async () => {
     const { document, canvas } = await canvasAndDocument();
     await fs.mkdir(path.join(root, 'Moved'));
     await fs.rename(path.join(root, canvas.path), path.join(root, 'Moved', canvas.path));
-    await fs.unlink(path.join(root, document.path));
+    await fs.unlink(path.join(root, 'Moved', canvas.path, path.basename(document.path)));
     await fs.writeFile(path.join(root, 'Broken.yantraD'), '{}');
     await store.getState().refresh();
-    expect(store.getState().activePath).toBe(`Moved/${canvas.path}`);
-    expect(store.getState().canvases.get(canvas.file.id)?.documentErrors.get(document.file.id)).toContain('missing');
+    expect(store.getState().vault?.entries.find((entry) => entry.path === 'Moved')?.children?.find((entry) => entry.path === `Moved/${canvas.path}`)?.error).toBeDefined();
     expect(store.getState().vault?.entries.find((entry) => entry.path === 'Broken.yantraD')?.error).toBeTruthy();
-    expect(store.getState().canvases.get(canvas.file.id)?.file.nodes).toHaveLength(1);
+    expect(store.getState().canvases.has(canvas.file.id)).toBe(false);
   });
 
   it('retains the active workspace after failed refresh and saves normally when the vault returns', async () => {
@@ -405,7 +409,7 @@ describe('vault lifecycle', () => {
   it('conflicts on canvas changes and reloads the external layout', async () => {
     const { canvasId, canvas } = await canvasAndDocument();
     const external = { ...canvas.file, viewport: { x: 70, y: 80, zoom: 0.5 } };
-    await fs.writeFile(path.join(root, canvas.path), JSON.stringify(external));
+    await fs.writeFile(path.join(root, packageLayoutPath(canvas.path)), JSON.stringify(external));
     const { nodes, edges, groups, layerOrder } = canvas.file;
     store.getState().updateCanvas(canvasId, { nodes, edges, groups, layerOrder, viewport: { x: 1, y: 2, zoom: 1 } });
     await expect(store.getState().flush()).rejects.toMatchObject({ failure: { code: 'conflict' } });
@@ -471,11 +475,11 @@ describe('vault lifecycle', () => {
     failTrash = true;
     await store.getState().deleteEntry(document.path);
     const raw = JSON.stringify({ ...newCanvas(canvas.file.title), id: canvas.file.id });
-    await fs.writeFile(path.join(root, canvas.path), raw);
+    await fs.writeFile(path.join(root, packageLayoutPath(canvas.path)), raw);
     failTrash = false;
     failTrashAfter = Infinity;
     expect((await repo.retryRecovery()).recovery?.message).toContain('Canvas changed externally');
-    expect(await fs.readFile(path.join(root, canvas.path), 'utf8')).toBe(raw);
+    expect(await fs.readFile(path.join(root, packageLayoutPath(canvas.path)), 'utf8')).toBe(raw);
     expect(trashed).toEqual([]);
   });
 
@@ -488,15 +492,15 @@ describe('vault lifecycle', () => {
 
   it('replays a deletion interrupted before the canvas update', async () => {
     const { document, canvas, node } = await canvasAndDocument();
-    const before = await fs.readFile(path.join(root, canvas.path), 'utf8');
+    const before = await fs.readFile(path.join(root, packageLayoutPath(canvas.path)), 'utf8');
     const after = `${JSON.stringify(removeCanvasNodes(canvas.file, new Set([node.id])), null, 2)}\n`;
     await fs.writeFile(path.join(root, '.yantra/deletion.json'), JSON.stringify({
       version: 1, path: document.path, kind: 'document', original: await fs.readFile(path.join(root, document.path), 'utf8'),
-      canvases: [{ path: canvas.path, before, after }],
+      canvases: [{ path: packageLayoutPath(canvas.path), before, after }],
     }));
     const reopened = await VaultRepository.open(root, false, trash);
     expect((await reopened.scan()).recovery).toBeNull();
-    expect(await fs.readFile(path.join(root, canvas.path), 'utf8')).toBe(after);
+    expect(await fs.readFile(path.join(root, packageLayoutPath(canvas.path)), 'utf8')).toBe(after);
     expect(trashed).toHaveLength(1);
   });
 

@@ -66,11 +66,10 @@ const yantraVault: YantraVaultApi = {
   readCanvas: (sessionId, path, mode) => ipcRenderer.invoke(VAULT_CHANNELS.READ_CANVAS, sessionId, path, mode),
   createCanvas: (sessionId, folder) => ipcRenderer.invoke(VAULT_CHANNELS.CREATE_CANVAS, sessionId, folder),
   saveCanvas: (sessionId, canvas, overwrite) => ipcRenderer.invoke(VAULT_CHANNELS.SAVE_CANVAS, sessionId, canvas, overwrite),
-  createNodeDocument: (sessionId) => ipcRenderer.invoke(VAULT_CHANNELS.CREATE_NODE_DOCUMENT, sessionId),
   restore: () => ipcRenderer.invoke(VAULT_CHANNELS.RESTORE),
   choose: (create) => ipcRenderer.invoke(VAULT_CHANNELS.CHOOSE, create),
   readDocument: (sessionId, path, mode) => ipcRenderer.invoke(VAULT_CHANNELS.READ_DOCUMENT, sessionId, path, mode),
-  createDocument: (sessionId, folder) => ipcRenderer.invoke(VAULT_CHANNELS.CREATE_DOCUMENT, sessionId, folder),
+  createDocument: (sessionId, folder, position) => ipcRenderer.invoke(VAULT_CHANNELS.CREATE_DOCUMENT, sessionId, folder, position),
   saveDocument: (sessionId, document, overwrite) => ipcRenderer.invoke(VAULT_CHANNELS.SAVE_DOCUMENT, sessionId, document, overwrite),
 };
 

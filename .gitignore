@@ -1,6 +1,9 @@
 node_modules/
 .DS_Store
 
+# Cursor / ECC local install (project agent config lives in .agents/)
+.cursor/
+
 # Logs
 logs
 *.log

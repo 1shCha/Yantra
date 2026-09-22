@@ -5,6 +5,7 @@ import {
   entryTitle,
   expandedWithAncestors,
   friendlyOperationError,
+  listDocumentMoveDestinations,
   listFolders,
   locationLabel,
   movedPath,
@@ -14,7 +15,9 @@ import {
 } from './vault-organize-helpers';
 
 const tree: VaultEntry[] = [
-  { path: 'Overview.yantraC', name: 'Overview.yantraC', kind: 'canvas' },
+  { path: 'Planning', name: 'Planning', kind: 'canvas', canvasId: 'board-1', children: [
+    { path: 'Planning/Goals.yantraD', name: 'Goals.yantraD', kind: 'document' },
+  ] },
   { path: 'Research', name: 'Research', kind: 'folder', children: [
     { path: 'Research/Notes.yantraD', name: 'Notes.yantraD', kind: 'document' },
     { path: 'Research/Systems', name: 'Systems', kind: 'folder', children: [] },
@@ -33,10 +36,21 @@ describe('path helpers', () => {
     expect(movedPath('Research/Notes.yantraD', '')).toBe('Notes.yantraD');
     expect(renamedPath('Research/Notes.yantraD', 'document', 'Journal')).toBe('Research/Journal.yantraD');
     expect(renamedPath('Research', 'folder', 'Archive')).toBe('Archive');
+    expect(renamedPath('Untitled', 'canvas', 'Map')).toBe('Map');
+    expect(renamedPath('Research/Untitled', 'canvas', 'Map')).toBe('Research/Map');
   });
 
   it('lists folders depth-first with depths', () => {
     expect(listFolders(tree)).toEqual([
+      { path: 'Research', name: 'Research', depth: 0 },
+      { path: 'Research/Systems', name: 'Systems', depth: 1 },
+      { path: 'Projects', name: 'Projects', depth: 0 },
+    ]);
+  });
+
+  it('lists document move destinations including valid packages', () => {
+    expect(listDocumentMoveDestinations(tree)).toEqual([
+      { path: 'Planning', name: 'Planning', depth: 0 },
       { path: 'Research', name: 'Research', depth: 0 },
       { path: 'Research/Systems', name: 'Systems', depth: 1 },
       { path: 'Projects', name: 'Projects', depth: 0 },
@@ -72,6 +86,24 @@ describe('canDropInto', () => {
     expect(canDropInto({ path: 'Research', kind: 'folder' }, 'Projects')).toBe(true);
     // A sibling with a shared name prefix is not a descendant.
     expect(canDropInto({ path: 'Research', kind: 'folder' }, 'Researching')).toBe(true);
+  });
+
+  it('allows moving a package into ordinary folders but not into another package', () => {
+    const packages = new Set(['Planning', 'Research/Planning']);
+    expect(canDropInto({ path: 'Planning', kind: 'canvas' }, 'Projects', packages)).toBe(true);
+    expect(canDropInto({ path: 'Planning', kind: 'canvas' }, '', packages)).toBe(false);
+    expect(canDropInto({ path: 'Research/Planning', kind: 'canvas' }, '', packages)).toBe(true);
+    expect(canDropInto({ path: 'Planning', kind: 'canvas' }, 'Planning', packages)).toBe(false);
+  });
+
+  it('allows document membership moves between ordinary folders and packages', () => {
+    const packages = new Set(['Planning', 'Research/Planning']);
+    expect(canDropInto({ path: 'Research/Notes.yantraD', kind: 'document' }, 'Planning', packages)).toBe(true);
+    expect(canDropInto({ path: 'Planning/Goals.yantraD', kind: 'document' }, 'Projects', packages)).toBe(true);
+    expect(canDropInto({ path: 'Planning/Goals.yantraD', kind: 'document' }, '', packages)).toBe(true);
+    expect(canDropInto({ path: 'Planning/Goals.yantraD', kind: 'document' }, 'Planning', packages)).toBe(false);
+    expect(canDropInto({ path: 'Research', kind: 'folder' }, 'Planning', packages)).toBe(false);
+    expect(canDropInto({ path: 'Planning', kind: 'canvas' }, 'Planning', packages)).toBe(false);
   });
 });
 

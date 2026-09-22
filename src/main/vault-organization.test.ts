@@ -25,12 +25,11 @@ describe('vault organization and placement', () => {
       refresh: () => repo.refresh(), deleteEntry: (_session, relative) => repo.deleteEntry(relative), retryRecovery: () => repo.retryRecovery(),
       restore: () => repo.scan(), choose: async () => null,
       readDocument: (_session, relative, mode) => repo.readDocument(relative, mode),
-      createDocument: (_session, folder) => repo.createDocument(folder),
+      createDocument: (_session, folder, position) => repo.createDocument(folder, position),
       saveDocument: (_session, file) => repo.saveDocument(file),
       readCanvas: (_session, relative, mode) => repo.readCanvas(relative, mode),
       createCanvas: (_session, folder) => repo.createCanvas(folder),
       saveCanvas: (_session, file) => repo.saveCanvas(file),
-      createNodeDocument: () => repo.createNodeDocument(),
       createFolder: (_session, folder, name) => repo.createFolder(folder, name),
       renameEntry: (_session, relative, name, title) => repo.renameEntry(relative, name, title),
       moveEntry: (_session, relative, folder, placement) => repo.moveEntry(relative, folder, placement),
@@ -50,8 +49,7 @@ describe('vault organization and placement', () => {
     await store.getState().createDocument('');
     await store.getState().createCanvas('');
     expect((await store.getState().moveEntry('B', '', { anchor: 'A', side: 'before' })).status).toBe('success');
-    expect((await store.getState().moveEntry('Untitled.yantraD', '', { anchor: 'Untitled.yantraC', side: 'before' })).status).toBe('success');
-    const expected = ['B', 'A', 'Untitled.yantraD', 'Untitled.yantraC'];
+    const expected = ['B', 'A', 'Untitled', 'Untitled.yantraD'];
     expect((await repo.refresh()).entries.map((entry) => entry.path)).toEqual(expected);
     expect((await (await VaultRepository.open(root)).scan()).entries.map((entry) => entry.path)).toEqual(expected);
     await store.getState().renameEntry('B', 'Z');
@@ -176,20 +174,24 @@ describe('vault organization and placement', () => {
     await expect(repo.moveEntry('Research', 'Shortcut')).rejects.toThrow('Symbolic links');
   });
 
-  it('renames documents and canvases with stable IDs and aligned titles, and moves both', async () => {
+  it('renames and moves standalone documents and packages into ordinary folders', async () => {
     const document = await repo.createDocument('');
     const canvas = await repo.createCanvas('');
     const renamed = await repo.renameEntry(document.path, 'Notes');
     expect(renamed.document?.id).toBe(document.document.id);
     expect(renamed.document?.title).toBe('Notes');
     await expect(fs.stat(path.join(root, document.path))).rejects.toThrow();
-    await repo.renameEntry(canvas.path, 'Map');
+    const renamedCanvas = await repo.renameEntry(canvas.path, 'Map');
+    expect(renamedCanvas.to).toBe('Map');
+    expect(renamedCanvas.canvas?.id).toBe(canvas.canvas.id);
+    expect((await repo.readCanvas('Map')).title).toBe('Map');
     await repo.createFolder('', 'Research');
     await repo.moveEntry('Notes.yantraD', 'Research');
-    await repo.moveEntry('Map.yantraC', 'Research');
+    await repo.moveEntry('Map', 'Research');
     await repo.saveDocument({ ...renamed.document!, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('After move')) });
     expect((await repo.readDocument('Research/Notes.yantraD')).id).toBe(document.document.id);
-    expect((await repo.readCanvas('Research/Map.yantraC')).id).toBe(canvas.canvas.id);
+    expect((await repo.readCanvas('Research/Map')).id).toBe(canvas.canvas.id);
+    expect((await repo.readCanvas('Research/Map')).title).toBe('Map');
     await expect(repo.saveDocument(document.document)).rejects.toThrow('identity');
     await expect(fs.stat(path.join(root, document.path))).rejects.toThrow();
   });
@@ -241,41 +243,36 @@ describe('vault organization and placement', () => {
     const documentId = store.getState().canvases.get(canvasId)!.file.nodes[0]!.documentId;
     const { nodes, edges, groups, layerOrder } = store.getState().canvases.get(canvasId)!.file;
     store.getState().updateCanvas(canvasId, { nodes, edges, groups, layerOrder, viewport: { x: 120, y: -80, zoom: 0.75 } });
-    await store.getState().moveEntry('Unfiled/Untitled.yantraD', 'Research');
     await store.getState().renameEntry('Research', 'Projects');
-    expect(store.getState().activePath).toBe('Projects/Untitled.yantraC');
-    expect(store.getState().documents.get(documentId)?.path).toBe('Projects/Untitled.yantraD');
-    await store.getState().renameEntry('Projects/Untitled.yantraC', 'Map');
+    expect(store.getState().activePath).toBe('Projects/Untitled');
+    expect(store.getState().documents.get(documentId)?.path).toBe('Projects/Untitled/Untitled.yantraD');
+    expect((await store.getState().renameEntry('Projects/Untitled', 'Map')).status).toBe('success');
     expect(store.getState().canvases.get(canvasId)?.file.title).toBe('Map');
-    await store.getState().openDocument('Projects/Untitled.yantraD');
+    expect(store.getState().canvases.get(canvasId)?.path).toBe('Projects/Map');
+    await store.getState().openDocument('Projects/Map/Untitled.yantraD');
     await store.getState().revealDocument(documentId);
-    expect(store.getState().activePath).toBe('Projects/Map.yantraC');
+    expect(store.getState().activePath).toBe('Projects/Map');
     expect(store.getState().revealTarget?.canvasId).toBe(canvasId);
     const reopened = createVaultWorkspace(testVaultApi(api));
     await reopened.getState().restore();
-    expect(reopened.getState().getAppearance(documentId)?.canvasPath).toBe('Projects/Map.yantraC');
+    expect(reopened.getState().getAppearance(documentId)?.canvasPath).toBe('Projects/Map');
     await reopened.getState().revealDocument(documentId);
     expect(reopened.getState().canvases.get(canvasId)?.file.viewport).toEqual({ x: 120, y: -80, zoom: 0.75 });
   });
 
-  it('places a standalone document without copying it, then reveals instead of duplicating', async () => {
+  it('rejects placing a standalone document onto a package', async () => {
     await store.getState().createDocument();
     const documentId = store.getState().activeDocumentId!;
     await store.getState().createCanvas();
     const first = store.getState().activeCanvasId!;
-    await store.getState().placeDocument(first, documentId, { x: 400, y: 300 });
-    const node = store.getState().canvases.get(first)!.file.nodes[0]!;
-    expect(node.documentId).toBe(documentId);
-    expect(store.getState().revealTarget?.nodeId).toBe(node.id);
+    expect((await store.getState().placeDocument(first, documentId, { x: 400, y: 300 })).status).toBe('failure');
+    expect(store.getState().canvases.get(first)?.file.nodes).toHaveLength(0);
     await store.getState().createCanvas();
     const second = store.getState().activeCanvasId!;
-    await store.getState().placeDocument(second, documentId, { x: 700, y: 300 });
-    expect(store.getState().activeCanvasId).toBe(first);
-    expect(store.getState().canvases.get(first)?.file.nodes).toHaveLength(1);
+    expect((await store.getState().placeDocument(second, documentId, { x: 700, y: 300 })).status).toBe('failure');
+    expect(store.getState().canvases.get(first)?.file.nodes).toHaveLength(0);
     expect(store.getState().canvases.get(second)?.file.nodes).toHaveLength(0);
     expect(store.getState().documents.size).toBe(1);
-    await store.getState().openDocument('Untitled.yantraD');
-    expect(store.getState().revealTarget).toBeNull();
     expect((await fs.readdir(root)).filter((name) => name.endsWith('.yantraD'))).toEqual(['Untitled.yantraD']);
   });
 
@@ -289,9 +286,8 @@ describe('vault organization and placement', () => {
     expect(reopened.getState().canvases.size).toBe(0);
     await reopened.getState().createCanvas();
     const destination = reopened.getState().activeCanvasId!;
-    await reopened.getState().placeDocument(destination, node.documentId, { x: 0, y: 0 });
-    expect(reopened.getState().activeCanvasId).toBe(canvasId);
-    expect(reopened.getState().revealTarget?.nodeId).toBe(node.id);
+    expect((await reopened.getState().placeDocument(destination, node.documentId, { x: 0, y: 0 })).status).toBe('failure');
+    expect(reopened.getState().getAppearance(node.documentId)?.canvasId).toBe(canvasId);
     expect(reopened.getState().canvases.get(destination)?.file.nodes).toHaveLength(0);
   });
 
@@ -349,13 +345,13 @@ describe('vault organization and placement', () => {
     expect((await store.getState().commitDocumentTitle(file.id)).status).toBe('success');
     expect(store.getState().documents.get(file.id)?.reloadRevision).toBe(0);
     expect(store.getState().canvases.get(canvasId)!.file.nodes[0]).toEqual(node);
-    expect(store.getState().documents.get(file.id)?.path).toBe('Unfiled/Node_42.yantraD');
+    expect(store.getState().documents.get(file.id)?.path).toBe('Untitled/Node_42.yantraD');
     await store.getState().openNodeDocument(canvasId, node.id);
-    expect(store.getState().activePath).toBe('Unfiled/Node_42.yantraD');
+    expect(store.getState().activePath).toBe('Untitled/Node_42.yantraD');
     const updated = store.getState().documents.get(file.id)!.file.doc;
     store.getState().updateDocument(file.id, { ...updated, content: [...updated.content!, { type: 'paragraph', content: [{ type: 'text', text: 'More body text' }] }] });
     await store.getState().flush();
-    expect((await repo.readDocument('Unfiled/Node_42.yantraD')).doc.content?.[1]?.content?.[0]?.text).toBe('More body text');
+    expect((await repo.readDocument('Untitled/Node_42.yantraD')).doc.content?.[1]?.content?.[0]?.text).toBe('More body text');
   });
 
   it('retains blank and excessive drafts, and never overwrites colliding files', async () => {
@@ -490,18 +486,21 @@ describe('vault organization and placement', () => {
       store.getState().updateDocument(documentId, withDocumentTitle(store.getState().documents.get(documentId)!.file.doc, 'node title'));
       expect((await store.getState().commitDocumentTitle(documentId)).status).toBe('success');
       expect(store.getState().titleErrors.has(documentId)).toBe(false);
-      expect(store.getState().documents.get(documentId)?.path).toBe('Unfiled/node_title.yantraD');
-      expect(documentTitle((await repo.readDocument('Unfiled/node_title.yantraD')).doc)).toBe('node title');
+      expect(store.getState().documents.get(documentId)?.path).toBe('Untitled/node_title.yantraD');
+      expect(documentTitle((await repo.readDocument('Untitled/node_title.yantraD')).doc)).toBe('node title');
     });
 
-    it('renames a canvas file when only filename case changes', async () => {
+    it('renames a canvas package, including case-only changes', async () => {
       await store.getState().createCanvas();
       const canvasId = store.getState().activeCanvasId!;
-      const path = store.getState().canvases.get(canvasId)!.path;
-      expect((await store.getState().renameEntry(path, 'Map')).status).toBe('success');
-      expect((await store.getState().renameEntry('Map.yantraC', 'map')).status).toBe('success');
-      expect(store.getState().canvases.get(canvasId)?.path).toBe('map.yantraC');
-      expect((await repo.readCanvas('map.yantraC')).title).toBe('map');
+      expect((await store.getState().renameEntry('Untitled', 'Map')).status).toBe('success');
+      expect(store.getState().canvases.get(canvasId)?.path).toBe('Map');
+      expect(store.getState().canvases.get(canvasId)?.file.title).toBe('Map');
+      expect((await repo.readCanvas('Map')).title).toBe('Map');
+      expect((await store.getState().renameEntry('Map', 'map')).status).toBe('success');
+      expect(store.getState().canvases.get(canvasId)?.path).toBe('map');
+      expect((await repo.readCanvas('map')).title).toBe('map');
+      expect(await fs.readFile(path.join(root, 'map/map.yantraC'), 'utf8')).toContain('"title": "map"');
     });
 
     it('renames a folder when only folder name case changes', async () => {
@@ -528,9 +527,10 @@ describe('vault organization and placement', () => {
     await store.getState().createCanvas('');
     const canvasPath = store.getState().activePath!;
     await store.getState().createFolder('', 'Archive');
-    expect((await store.getState().moveEntries([documentPath, canvasPath], 'Research')).status).toBe('success');
+    expect((await store.getState().moveEntries([documentPath], 'Research')).status).toBe('success');
+    expect((await store.getState().moveEntries([canvasPath], 'Research')).status).toBe('success');
     expect(store.getState().vault?.entries.find((entry) => entry.path === 'Research')?.children?.map((entry) => entry.path).sort())
-      .toEqual(['Research/Untitled.yantraC', 'Research/Untitled.yantraD'].sort());
+      .toEqual(['Research/Untitled', 'Research/Untitled.yantraD']);
     await store.getState().createFolder('Research', 'Notes');
     expect((await store.getState().moveEntries(['Research'], 'Research/Notes')).status).toBe('failure');
     await repo.createDocument('Archive');

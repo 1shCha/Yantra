@@ -2,21 +2,24 @@ import { tiptapDocSchema } from '../shared/tiptap-document';
 import type { CanvasDeletionResult } from '../shared/vault-api';
 import { scanVault } from './vault-scan';
 import { VaultFileAccess } from './vault-file-access';
-import { FILE_EXTENSIONS, vaultFileExtension } from '../shared/vault-paths';
+import { FILE_EXTENSIONS, parentFolderOf, vaultFileExtension } from '../shared/vault-paths';
 import { vaultTrace, vaultTraceOperation } from './vault-diagnostics';
 import fs from 'node:fs/promises';
 import { titleFilename, withDocumentTitle } from '../shared/document-title';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { atomicCreate, atomicWrite } from './atomic-write';
-import { migrateVaultNames } from './vault-name-migration';
 import { canvasFileSchema, decodeCanvas, newCanvas, removeCanvasNodes, type CanvasFile } from '../shared/vault-canvas';
 import { VaultDeletion, folderDeletionFingerprint, type DeletionRecord } from './vault-deletion';
 import { OperationError, operationFailure } from '../shared/operation-result';
 import { batchMoveTargets, movedEntryPath, normalizeBatchMoveSources, rejectNestedBatchDestination, type VaultBatchMoveResult } from '../shared/vault-batch-move';
 import { orderEntries, reorderedPaths, type EntryPlacement, relocatedPath, vaultNameSchema, type VaultEntryChange } from '../shared/vault-organization';
-import { decodeDocument, documentFileSchema, newDocument, vaultMetadataSchema,
+import { decodeDocument, decodeVaultMetadata, documentFileSchema, newDocument, VAULT_FORMAT_VERSION,
   type DocumentFile, type VaultEntry, type VaultMetadata, type VaultSnapshot } from '../shared/vault-format';
+import {
+  assertPresentationOnlySave, CANVAS_NODE_DEFAULT_WIDTH, canvasNodePlacement, isContainerKind, packageLayoutPath,
+  UNSUPPORTED_PACKAGE_OPERATION,
+} from '../shared/vault-packages';
 
 function isCode(error: Error, code: string): boolean {
   return 'code' in error && error.code === code;
@@ -24,9 +27,12 @@ function isCode(error: Error, code: string): boolean {
 
 export class VaultRepository {
   readonly sessionId = randomUUID();
+  /** Test seam: fail the layout write after a package document exists. */
+  static failNextPackageLayoutWrite = false;
   private documentPaths = new Map<string, string>();
   private canvasPaths = new Map<string, string>();
   private canvases = new Map<string, CanvasFile>();
+  private invalidPackagePaths = new Set<string>();
   private mutation: Promise<void> = Promise.resolve();
   private baselines = new Map<string, string>();
   private readonly deletion: VaultDeletion;
@@ -82,12 +88,11 @@ export class VaultRepository {
     }
     const metadataPath = path.join(metadataFolder, 'vault.json');
     if (create) {
-      const metadata: VaultMetadata = { formatVersion: 1, id: randomUUID(), createdAt: new Date().toISOString() };
+      const metadata: VaultMetadata = { formatVersion: VAULT_FORMAT_VERSION, id: randomUUID(), createdAt: new Date().toISOString() };
       await atomicCreate(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
     }
     if ((await fs.lstat(metadataPath)).isSymbolicLink()) throw new OperationError({ code: 'invalid-input', message: 'Vault metadata cannot be a symbolic link.' });
-    const metadata = vaultMetadataSchema.parse(JSON.parse(await fs.readFile(metadataPath, 'utf8')));
-    await migrateVaultNames(canonicalRoot);
+    const metadata = decodeVaultMetadata(await fs.readFile(metadataPath, 'utf8'));
     const repository = new VaultRepository(canonicalRoot, metadata, trash);
     await repository.deletion.resume();
     return repository;
@@ -110,13 +115,29 @@ export class VaultRepository {
 
   private async scanFiles(acceptDiskVersions = false): Promise<VaultSnapshot> {
     vaultTrace.record(acceptDiskVersions ? 'scan.accept-disk' : 'scan.inspect', { operation: vaultTraceOperation.getStore() });
-    const { documentPaths, canvasPaths, canvases, baselines, entries, appearances } = await scanVault((relative) => this.resolve(relative));
+    const scanned = await scanVault((relative) => this.resolve(relative));
+    const { documentPaths, baselines, entries, appearances } = scanned;
+    let { canvasPaths, canvases, invalidPackagePaths } = scanned;
     if (!acceptDiskVersions) {
       for (const [relative, raw] of this.baselines) baselines.set(relative, raw);
+    }
+    if (this.deletion.issue) {
+      canvasPaths = new Map(canvasPaths);
+      canvases = new Map(canvases);
+      invalidPackagePaths = new Set(invalidPackagePaths);
+      for (const [id, packagePath] of this.canvasPaths) {
+        invalidPackagePaths.delete(packagePath);
+        const canvas = this.canvases.get(packagePath);
+        if (canvas) {
+          canvasPaths.set(id, packagePath);
+          canvases.set(packagePath, canvas);
+        }
+      }
     }
     this.documentPaths = documentPaths;
     this.canvasPaths = canvasPaths;
     this.canvases = canvases;
+    this.invalidPackagePaths = invalidPackagePaths;
     this.baselines = baselines;
     return { sessionId: this.sessionId, root: this.root, name: path.basename(this.root), metadata: this.metadata, entries: orderEntries(entries, this.metadata.sidebarOrder), appearances, recovery: this.deletion.issue };
   }
@@ -131,8 +152,107 @@ export class VaultRepository {
     return document;
   }
 
-  createDocument(folder: string): Promise<{ path: string; document: DocumentFile }> {
-    return this.mutate(() => this.createDocumentFile(folder));
+  createDocument(destination: string, position?: { x: number; y: number }): Promise<{
+    path: string; document: DocumentFile; canvas?: CanvasFile; nodeId?: string;
+  }> {
+    return this.mutate(() => this.createDocumentAt(destination, position));
+  }
+
+  private packagePathSet(): Set<string> {
+    return new Set([...this.canvasPaths.values(), ...this.invalidPackagePaths]);
+  }
+
+  private owningPackage(relative: string): string | undefined {
+    const packages = this.packagePathSet();
+    if (packages.has(relative)) return relative;
+    const parent = parentFolderOf(relative);
+    if (parent && packages.has(parent)) return parent;
+  }
+
+  private isValidPackage(relative: string): boolean {
+    return [...this.canvasPaths.values()].includes(relative);
+  }
+
+  private assertPackageWritable(packagePath: string): void {
+    if (this.invalidPackagePaths.has(packagePath) || !this.isValidPackage(packagePath)) {
+      throw new OperationError({ code: 'unavailable', message: 'This canvas package is unavailable.', path: packagePath });
+    }
+  }
+
+  private assertOrdinaryDestination(folder: string, action: string): void {
+    if (!folder) return;
+    if (this.owningPackage(folder)) {
+      throw new OperationError({ code: 'invalid-input', message: `${action} must use an ordinary folder.` });
+    }
+  }
+
+  private assertBatchMoveDestination(folder: string, sources: readonly string[]): void {
+    if (!folder) return;
+    if (this.isValidPackage(folder)) {
+      if (sources.every((relative) => relative.endsWith(FILE_EXTENSIONS.document))) return;
+      throw new OperationError({ code: 'invalid-input', message: 'Move must use an ordinary folder.' });
+    }
+    this.assertOrdinaryDestination(folder, 'Move');
+  }
+
+  private documentPackageParent(documentPath: string): string | undefined {
+    if (!documentPath.endsWith(FILE_EXTENSIONS.document)) return undefined;
+    const parent = parentFolderOf(documentPath);
+    return parent && this.isValidPackage(parent) ? parent : undefined;
+  }
+
+  private allowsDocumentMembershipMove(relative: string, destinationFolder: string): boolean {
+    if (!relative.endsWith(FILE_EXTENSIONS.document)) return false;
+    const sourcePkg = this.documentPackageParent(relative);
+    const destPkg = destinationFolder && this.isValidPackage(destinationFolder) ? destinationFolder : undefined;
+    if (destPkg) {
+      if (sourcePkg === destPkg) return false;
+      this.assertPackageWritable(destPkg);
+      return true;
+    }
+    if (!sourcePkg) return false;
+    if (destinationFolder && this.isValidPackage(destinationFolder)) return false;
+    if (destinationFolder) {
+      const owner = this.owningPackage(destinationFolder);
+      if (owner && owner !== destinationFolder) return false;
+    }
+    this.assertPackageWritable(sourcePkg);
+    return true;
+  }
+
+  private rejectUnsupportedPackageMutation(relative: string, destination?: string): void {
+    if (relative.endsWith(FILE_EXTENSIONS.canvas)) {
+      throw new OperationError({ code: 'invalid-input', message: 'The hidden layout file cannot be organized independently.' });
+    }
+    const sourcePackage = this.owningPackage(relative);
+    if (sourcePackage) this.assertPackageWritable(sourcePackage);
+    if (destination !== undefined) {
+      if (this.allowsDocumentMembershipMove(relative, destination)) return;
+      const destinationPackage = this.owningPackage(destination);
+      if (destinationPackage && this.isValidPackage(destination)) {
+        throw new OperationError({ code: 'invalid-input', message: UNSUPPORTED_PACKAGE_OPERATION });
+      }
+      if (destinationPackage && !this.isValidPackage(destination)) {
+        throw new OperationError({ code: 'invalid-input', message: UNSUPPORTED_PACKAGE_OPERATION });
+      }
+      if (sourcePackage && sourcePackage !== relative && sourcePackage !== destination) {
+        throw new OperationError({ code: 'invalid-input', message: UNSUPPORTED_PACKAGE_OPERATION });
+      }
+    }
+  }
+
+  private async createDocumentAt(destination: string, position?: { x: number; y: number }): Promise<{
+    path: string; document: DocumentFile; canvas?: CanvasFile; nodeId?: string;
+  }> {
+    this.assertWritable();
+    if (this.invalidPackagePaths.has(destination)) {
+      throw new OperationError({ code: 'unavailable', message: 'This canvas package is unavailable.', path: destination });
+    }
+    if (this.isValidPackage(destination)) return this.createPackageDocument(destination, position);
+    if (this.owningPackage(destination)) {
+      throw new OperationError({ code: 'invalid-input', message: UNSUPPORTED_PACKAGE_OPERATION });
+    }
+    return this.createDocumentFile(destination);
   }
 
   private async createDocumentFile(folder: string): Promise<{ path: string; document: DocumentFile }> {
@@ -154,6 +274,43 @@ export class VaultRepository {
     }
   }
 
+  private async createPackageDocument(packagePath: string, position?: { x: number; y: number }): Promise<{
+    path: string; document: DocumentFile; canvas: CanvasFile; nodeId: string;
+  }> {
+    this.assertPackageWritable(packagePath);
+    const created = await this.createDocumentFile(packagePath);
+    const canvasId = [...this.canvasPaths].find(([, path]) => path === packagePath)?.[0];
+    const current = canvasId ? this.canvases.get(packagePath) : undefined;
+    if (!canvasId || !current) {
+      this.invalidPackagePaths.add(packagePath);
+      throw new OperationError({ code: 'unavailable', message: 'This canvas package is unavailable.', path: packagePath });
+    }
+    const placement = canvasNodePlacement(position);
+    const node = { id: randomUUID(), kind: 'document' as const, documentId: created.document.id, ...placement };
+    const canvas = canvasFileSchema.parse({
+      ...current,
+      nodes: [...current.nodes, node],
+      layerOrder: [...current.layerOrder, node.id],
+      updatedAt: new Date().toISOString(),
+    });
+    const layoutPath = packageLayoutPath(packagePath);
+    try {
+      if (VaultRepository.failNextPackageLayoutWrite) {
+        VaultRepository.failNextPackageLayoutWrite = false;
+        throw new OperationError({ code: 'io', message: 'Layout write failed.' });
+      }
+      await this.unchanged(layoutPath);
+      const raw = `${JSON.stringify(canvas, null, 2)}\n`;
+      await atomicWrite(await this.resolve(layoutPath), raw);
+      this.baselines.set(layoutPath, raw);
+      this.canvases.set(packagePath, canvas);
+      return { ...created, canvas, nodeId: node.id };
+    } catch (error) {
+      this.invalidPackagePaths.add(packagePath);
+      throw error;
+    }
+  }
+
   saveDocument(input: DocumentFile, overwrite = false): Promise<{ savedAt: string }> {
     const document = documentFileSchema.parse(input);
     vaultTrace.record('document.write.request', { operation: vaultTraceOperation.getStore(), resource: vaultTrace.resource(document.id) });
@@ -161,6 +318,10 @@ export class VaultRepository {
     this.assertWritable();
     const relative = this.documentPaths.get(document.id);
     if (!relative) throw new OperationError({ code: 'missing', message: 'Document is not registered in this vault.' });
+    const owner = this.owningPackage(relative);
+    if (owner && this.invalidPackagePaths.has(owner)) {
+      throw new OperationError({ code: 'unavailable', message: 'This canvas package is unavailable.', path: owner });
+    }
     if (!overwrite) await this.unchanged(relative);
     const current = await this.readDocument(relative);
     if (document.title !== current.title || document.createdAt !== current.createdAt) throw new OperationError({ code: 'invalid-input', message: 'Document identity cannot change during content saving.' });
@@ -171,26 +332,17 @@ export class VaultRepository {
     });
   }
 
-  createNodeDocument(): Promise<{ path: string; document: DocumentFile }> {
-    return this.mutate(async () => {
-    this.assertWritable();
-    try {
-      await fs.mkdir(path.join(this.root, 'Unfiled'));
-    } catch (error) {
-      if (!(error instanceof Error && isCode(error, 'EEXIST'))) throw error;
-    }
-    return this.createDocumentFile('Unfiled');
-    });
-  }
-
   async readCanvas(relative: string, mode: 'inspect' | 'accept-disk' = 'inspect'): Promise<CanvasFile> {
-    const raw = await this.files.read(relative);
+    const layoutPath = packageLayoutPath(relative);
+    const raw = await this.files.read(layoutPath);
     const canvas = decodeCanvas(raw);
     vaultTrace.record(`canvas.read.${mode}`, { operation: vaultTraceOperation.getStore(), resource: vaultTrace.resource(canvas.id) });
-    if (this.canvasPaths.get(canvas.id) !== relative) throw new OperationError({ code: 'unavailable', message: 'Canvas is missing or has an ambiguous identity or appearance.' });
-    if (canvas.title !== path.basename(relative, FILE_EXTENSIONS.canvas)) throw new OperationError({ code: 'invalid-input', message: 'Canvas title does not match its filename.' });
+    if (this.invalidPackagePaths.has(relative) || this.canvasPaths.get(canvas.id) !== relative) {
+      throw new OperationError({ code: 'unavailable', message: 'Canvas is missing or has an ambiguous identity or appearance.' });
+    }
+    if (canvas.title !== path.basename(relative)) throw new OperationError({ code: 'invalid-input', message: 'Canvas title does not match its package folder.' });
     if (mode === 'accept-disk') {
-      this.baselines.set(relative, raw);
+      this.baselines.set(layoutPath, raw);
       this.canvases.set(relative, canvas);
     }
     return canvas;
@@ -202,18 +354,22 @@ export class VaultRepository {
 
   private async createCanvasFile(folder: string): Promise<{ path: string; canvas: CanvasFile }> {
     this.assertWritable();
+    this.assertOrdinaryDestination(folder, 'New Canvas');
     const absoluteFolder = await this.resolve(folder);
     if (!(await fs.stat(absoluteFolder)).isDirectory()) throw new OperationError({ code: 'invalid-input', message: 'Canvas destination is not a folder.' });
     for (let suffix = 0; ; suffix += 1) {
       const title = suffix === 0 ? 'Untitled' : `Untitled_${suffix + 1}`;
       const canvas = newCanvas(title);
-      const relative = folder ? `${folder}/${title}${FILE_EXTENSIONS.canvas}` : `${title}${FILE_EXTENSIONS.canvas}`;
+      const packagePath = folder ? `${folder}/${title}` : title;
+      const layoutPath = packageLayoutPath(packagePath);
       try {
-        await atomicCreate(path.join(absoluteFolder, `${title}${FILE_EXTENSIONS.canvas}`), `${JSON.stringify(canvas, null, 2)}\n`);
-        this.canvasPaths.set(canvas.id, relative);
-        this.baselines.set(relative, `${JSON.stringify(canvas, null, 2)}\n`);
-        this.canvases.set(relative, canvas);
-        return { path: relative, canvas };
+        const absolutePackage = path.join(absoluteFolder, title);
+        await fs.mkdir(absolutePackage);
+        await atomicCreate(path.join(absolutePackage, `${title}${FILE_EXTENSIONS.canvas}`), `${JSON.stringify(canvas, null, 2)}\n`);
+        this.canvasPaths.set(canvas.id, packagePath);
+        this.baselines.set(layoutPath, `${JSON.stringify(canvas, null, 2)}\n`);
+        this.canvases.set(packagePath, canvas);
+        return { path: packagePath, canvas };
       } catch (error) {
         if (!(error instanceof Error && isCode(error, 'EEXIST'))) throw error;
       }
@@ -223,30 +379,20 @@ export class VaultRepository {
   saveCanvas(input: CanvasFile, overwrite = false): Promise<{ savedAt: string }> {
     const canvas = canvasFileSchema.parse(input);
     vaultTrace.record('canvas.write.request', { operation: vaultTraceOperation.getStore(), resource: vaultTrace.resource(canvas.id) });
-    // Serialize cross-canvas claims, not just writes to an individual file.
     return this.mutate(async () => {
       this.assertWritable();
-      const relative = this.canvasPaths.get(canvas.id);
-      if (!relative) throw new OperationError({ code: 'missing', message: 'Canvas is not registered in this vault.' });
-      if (!overwrite) await this.unchanged(relative);
-      const current = await this.readCanvas(relative);
-      if (canvas.title !== current.title || canvas.createdAt !== current.createdAt) throw new OperationError({ code: 'invalid-input', message: 'Canvas identity cannot change during saving.' });
-      for (const node of canvas.nodes) {
-        for (const other of this.canvases.values()) {
-          if (other.id !== canvas.id && other.nodes.some((candidate) => candidate.documentId === node.documentId)) {
-            throw new OperationError({ code: 'invalid-input', message: 'A document can appear on only one canvas.' });
-          }
-        }
-      }
-      await Promise.all(canvas.nodes.filter((node) => !current.nodes.some((candidate) => candidate.id === node.id && candidate.documentId === node.documentId)).map(async (node) => {
-        const documentPath = this.documentPaths.get(node.documentId);
-        if (!documentPath) throw new OperationError({ code: 'invalid-input', message: 'Save the document before adding its canvas reference.' });
-        await this.readDocument(documentPath);
-      }));
-      if (!overwrite) await this.unchanged(relative);
-      await atomicWrite(await this.resolve(relative), `${JSON.stringify(canvas, null, 2)}\n`);
-      this.baselines.set(relative, `${JSON.stringify(canvas, null, 2)}\n`);
-      this.canvases.set(relative, canvas);
+      const packagePath = this.canvasPaths.get(canvas.id);
+      if (!packagePath) throw new OperationError({ code: 'missing', message: 'Canvas is not registered in this vault.' });
+      this.assertPackageWritable(packagePath);
+      const layoutPath = packageLayoutPath(packagePath);
+      if (!overwrite) await this.unchanged(layoutPath);
+      const current = await this.readCanvas(packagePath);
+      const documents = new Set([...this.documentPaths].filter(([, relative]) => parentFolderOf(relative) === packagePath).map(([id]) => id));
+      assertPresentationOnlySave(current, canvas, documents);
+      if (!overwrite) await this.unchanged(layoutPath);
+      await atomicWrite(await this.resolve(layoutPath), `${JSON.stringify(canvas, null, 2)}\n`);
+      this.baselines.set(layoutPath, `${JSON.stringify(canvas, null, 2)}\n`);
+      this.canvases.set(packagePath, canvas);
       return { savedAt: new Date().toISOString() };
     });
   }
@@ -255,6 +401,7 @@ export class VaultRepository {
     const name = vaultNameSchema.parse(input);
     return this.mutate(async () => {
       this.assertWritable();
+      this.assertOrdinaryDestination(folder, 'New Folder');
       const parent = await this.resolve(folder);
       if (!(await fs.stat(parent)).isDirectory()) throw new OperationError({ code: 'invalid-input', message: 'Destination is not a folder.' });
       await fs.mkdir(path.join(parent, name));
@@ -266,12 +413,14 @@ export class VaultRepository {
     const name = vaultNameSchema.parse(input);
     if (documentTitle !== undefined && titleFilename(documentTitle) !== name) throw new OperationError({ code: 'invalid-input', message: 'The filename must match the document title.' });
     return this.mutate(async () => {
+      this.rejectUnsupportedPackageMutation(relative);
       const source = await this.entryPath(relative);
       const isFolder = (await fs.stat(source)).isDirectory();
       const extension = isFolder ? '' : this.fileExtension(relative);
       if (documentTitle !== undefined && extension !== '.yantraD') throw new OperationError({ code: 'invalid-input', message: 'Only documents have editable text titles.' });
       const parent = relative.split('/').slice(0, -1).join('/');
-      return this.relocate(relative, parent ? `${parent}/${name}${extension}` : `${name}${extension}`, isFolder ? undefined : name, documentTitle);
+      const to = parent ? `${parent}/${name}${extension}` : `${name}${extension}`;
+      return this.relocateEntry(relative, to, isFolder ? undefined : name, documentTitle);
     });
   }
 
@@ -285,15 +434,19 @@ export class VaultRepository {
         // Ordering needs sibling names and kinds, not document contents or a full scan.
         const directory = await this.resolve(folder);
         const names = await fs.readdir(directory, { withFileTypes: true });
+        const packages = this.packagePathSet();
         const items: VaultEntry[] = names.filter((item) => item.name !== '.yantra' && !item.isSymbolicLink()
-          && (item.isDirectory() || (item.isFile() && /\.yantra[DC]$/.test(item.name))))
-          .map((item): VaultEntry => ({ name: item.name, path: folder ? `${folder}/${item.name}` : item.name,
-            kind: item.isDirectory() ? 'folder' : item.name.endsWith('.yantraD') ? 'document' : 'canvas' }))
-          .sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name));
+          && (item.isDirectory() || (item.isFile() && item.name.endsWith(FILE_EXTENSIONS.document))))
+          .map((item): VaultEntry => {
+            const itemPath = folder ? `${folder}/${item.name}` : item.name;
+            return { name: item.name, path: itemPath,
+              kind: item.isDirectory() ? packages.has(itemPath) ? 'canvas' : 'folder' : 'document' };
+          })
+          .sort((a, b) => Number(isContainerKind(b.kind)) - Number(isContainerKind(a.kind)) || a.name.localeCompare(b.name));
         const source = items.find((item) => item.path === relative);
         const anchor = items.find((item) => item.path === placement.anchor);
         if (!source || !anchor) throw new OperationError({ code: 'invalid-input', message: 'Choose an existing file or folder.' });
-        if ((source.kind === 'folder') !== (anchor.kind === 'folder')) {
+        if (isContainerKind(source.kind) !== isContainerKind(anchor.kind)) {
           throw new OperationError({ code: 'invalid-input', message: 'Folders stay above files. Reorder within the same group.' });
         }
         const saved = this.metadata.sidebarOrder ?? [];
@@ -302,11 +455,12 @@ export class VaultRepository {
         await this.saveSidebarOrder(order);
         return { from: relative, to: relative, sidebarOrder: order };
       }
+      this.rejectUnsupportedPackageMutation(relative, folder);
       await this.entryPath(relative);
       const parent = await this.resolve(folder);
       if (!(await fs.stat(parent)).isDirectory()) throw new OperationError({ code: 'invalid-input', message: 'Destination is not a folder.' });
       const name = relative.split('/').at(-1)!;
-      return this.relocate(relative, folder ? `${folder}/${name}` : name);
+      return this.relocateEntry(relative, folder ? `${folder}/${name}` : name);
     });
   }
 
@@ -319,7 +473,7 @@ export class VaultRepository {
       const changes: VaultEntryChange[] = [];
       try {
         for (const relative of toMove) {
-          changes.push(await this.relocate(relative, movedEntryPath(relative, folder)));
+          changes.push(await this.relocateEntry(relative, movedEntryPath(relative, folder)));
         }
       } catch (error) {
         const failurePath = toMove[changes.length] ?? toMove[0]!;
@@ -340,9 +494,11 @@ export class VaultRepository {
   private async preflightBatchMove(sources: readonly string[], folder: string, targets: readonly string[]): Promise<void> {
     this.assertWritable();
     if (folder) {
+      this.assertBatchMoveDestination(folder, sources);
       const parent = await this.resolve(folder);
       if (!(await fs.stat(parent)).isDirectory()) throw new OperationError({ code: 'invalid-input', message: 'Destination is not a folder.' });
     }
+    for (const relative of sources) this.rejectUnsupportedPackageMutation(relative, folder);
     if (rejectNestedBatchDestination(sources, folder)) {
       throw new OperationError({ code: 'invalid-input', message: 'A folder cannot be moved inside itself.' });
     }
@@ -411,6 +567,141 @@ export class VaultRepository {
     } catch (error) {
       if (error instanceof Error && isCode(error, 'ENOENT')) return false;
       throw error;
+    }
+  }
+
+  private async writePackageCanvas(packagePath: string, canvas: CanvasFile): Promise<void> {
+    const layoutPath = packageLayoutPath(packagePath);
+    if (VaultRepository.failNextPackageLayoutWrite) {
+      VaultRepository.failNextPackageLayoutWrite = false;
+      throw new OperationError({ code: 'io', message: 'Layout write failed.' });
+    }
+    await this.unchanged(layoutPath);
+    const raw = `${JSON.stringify(canvas, null, 2)}\n`;
+    await atomicWrite(await this.resolve(layoutPath), raw);
+    this.baselines.set(layoutPath, raw);
+    this.canvases.set(packagePath, canvas);
+  }
+
+  private async syncDocumentMembership(
+    from: string,
+    to: string,
+    sourcePkg: string | undefined,
+    destPkg: string | undefined,
+    result: VaultEntryChange,
+  ): Promise<VaultEntryChange> {
+    if (sourcePkg === destPkg || !from.endsWith(FILE_EXTENSIONS.document)) return result;
+    const document = result.document ?? await this.readDocument(to);
+    const updated: CanvasFile[] = [];
+    const destBefore = destPkg ? this.canvases.get(destPkg) : undefined;
+    const sourceBefore = sourcePkg ? this.canvases.get(sourcePkg) : undefined;
+    let destCommitted = false;
+    let sourceCommitted = false;
+    const markUnavailable = (paths: string[]) => {
+      for (const packagePath of paths) this.invalidPackagePaths.add(packagePath);
+    };
+    try {
+      if (destPkg && destPkg !== sourcePkg) {
+        const current = destBefore;
+        if (!current) throw new OperationError({ code: 'unavailable', message: 'This canvas package is unavailable.', path: destPkg });
+        const placement = canvasNodePlacement();
+        const node = {
+          id: randomUUID(), kind: 'document' as const, documentId: document.id,
+          ...placement,
+          x: placement.x + current.nodes.length * (CANVAS_NODE_DEFAULT_WIDTH + 20),
+        };
+        const destWritten = canvasFileSchema.parse({
+          ...current,
+          nodes: [...current.nodes, node],
+          layerOrder: [...current.layerOrder, node.id],
+          updatedAt: new Date().toISOString(),
+        });
+        await this.writePackageCanvas(destPkg, destWritten);
+        destCommitted = true;
+        updated.push(destWritten);
+      }
+      if (sourcePkg && sourcePkg !== destPkg) {
+        if (!sourceBefore) throw new OperationError({ code: 'unavailable', message: 'This canvas package is unavailable.', path: sourcePkg });
+        const removed = new Set(sourceBefore.nodes.filter((node) => node.documentId === document.id).map((node) => node.id));
+        if (removed.size) {
+          const sourceWritten = removeCanvasNodes(sourceBefore, removed);
+          await this.writePackageCanvas(sourcePkg, sourceWritten);
+          sourceCommitted = true;
+          updated.push(sourceWritten);
+        }
+      }
+    } catch (error) {
+      const affected = [destPkg, sourcePkg].filter((item): item is string => !!item);
+      try {
+        if (destCommitted && destPkg && destBefore) await this.writePackageCanvas(destPkg, destBefore);
+        if (sourceCommitted && sourcePkg && sourceBefore) await this.writePackageCanvas(sourcePkg, sourceBefore);
+        if (from !== to) await this.relocate(to, from);
+      } catch (rollbackError) {
+        markUnavailable(affected);
+        const rollbackMessage = operationFailure(rollbackError).message;
+        throw new OperationError({
+          code: 'io',
+          message: `${operationFailure(error).message} The document move could not be rolled back: ${rollbackMessage}`,
+        });
+      }
+      throw error;
+    }
+    return updated.length ? { ...result, canvases: updated } : result;
+  }
+
+  private async relocateEntry(from: string, to: string, title?: string, documentTitle?: string): Promise<VaultEntryChange> {
+    const sourcePkg = this.documentPackageParent(from);
+    const destFolder = parentFolderOf(to);
+    const destPkg = destFolder && this.isValidPackage(destFolder) ? destFolder : undefined;
+    let result = await this.relocate(from, to, title, documentTitle);
+    if (from !== to && from.endsWith(FILE_EXTENSIONS.document) && (sourcePkg || destPkg)) {
+      result = await this.syncDocumentMembership(from, to, sourcePkg, destPkg, result);
+    }
+    if (!this.isValidPackage(to)) return result;
+    return this.alignPackageLayout(from, to, result);
+  }
+
+  private async alignPackageLayout(from: string, to: string, result: VaultEntryChange): Promise<VaultEntryChange> {
+    const layoutAfterMove = relocatedPath(packageLayoutPath(from), from, to);
+    const expectedLayout = packageLayoutPath(to);
+    const title = to.split('/').at(-1)!;
+    const current = this.canvases.get(to);
+    if (!current) {
+      this.invalidPackagePaths.add(to);
+      return { ...result, warning: result.warning ?? 'The canvas package was moved, but it is now unavailable.' };
+    }
+    if (layoutAfterMove === expectedLayout && current.title === title) return result;
+    const updated = canvasFileSchema.parse({ ...current, title, updatedAt: new Date().toISOString() });
+    try {
+      if (VaultRepository.failNextPackageLayoutWrite) {
+        VaultRepository.failNextPackageLayoutWrite = false;
+        throw new OperationError({ code: 'io', message: 'Layout write failed.' });
+      }
+      await this.unchanged(layoutAfterMove);
+      const raw = `${JSON.stringify(updated, null, 2)}\n`;
+      const source = await this.resolve(layoutAfterMove);
+      const destination = path.join(await this.resolve(to), `${title}${FILE_EXTENSIONS.canvas}`);
+      if (await this.sameInode(source, destination)) {
+        await atomicWrite(source, raw);
+        await this.renameCaseOnly(source, destination);
+      } else {
+        await atomicCreate(destination, raw);
+        try { await fs.unlink(source); }
+        catch (error) {
+          await fs.unlink(destination).catch(() => { /* Preserve both copies if rollback cannot remove the destination. */ });
+          throw error;
+        }
+      }
+      this.baselines.delete(layoutAfterMove);
+      this.baselines.set(expectedLayout, raw);
+      this.canvases.set(to, updated);
+      return { ...result, canvas: updated };
+    } catch (error) {
+      this.invalidPackagePaths.add(to);
+      const message = operationFailure(error).message;
+      return { ...result, warning: result.warning
+        ? `${result.warning} The package layout could not be renamed: ${message}`
+        : `The package was moved, but its layout could not be renamed: ${message}` };
     }
   }
 
@@ -493,6 +784,7 @@ export class VaultRepository {
       }
     }
     for (const [id, relative] of this.canvasPaths) this.canvasPaths.set(id, relocatedPath(relative, from, to));
+    this.invalidPackagePaths = new Set([...this.invalidPackagePaths].map((relative) => relocatedPath(relative, from, to)));
     const canvasesBeforeMove = Array.from(this.canvases);
     for (const [relative, canvas] of canvasesBeforeMove) {
       const next = relocatedPath(relative, from, to);
@@ -521,12 +813,12 @@ export class VaultRepository {
       const before = await this.scanFiles();
       const canvasPath = this.canvasPaths.get(canvasId);
       const canvas = canvasPath && this.canvases.get(canvasPath);
-      if (!canvas) throw new OperationError({ code: 'unavailable', message: 'Canvas is unavailable.' });
+      if (!canvas || !canvasPath || this.invalidPackagePaths.has(canvasPath)) throw new OperationError({ code: 'unavailable', message: 'Canvas is unavailable.' });
       const ids = new Set(nodeIds);
       const nodes = canvas.nodes.filter((node) => ids.has(node.id));
       const flatten = (entries: VaultEntry[]): VaultEntry[] => entries.flatMap((entry) => [entry, ...flatten(entry.children ?? [])]);
       const entries = flatten(before.entries);
-      if (entries.some((entry) => entry.kind === 'canvas' && entry.error)) {
+      if (entries.some((entry) => entry.kind === 'canvas' && entry.error && entry.path !== canvasPath)) {
         throw new OperationError({ code: 'unavailable', message: 'Resolve unavailable canvases before deleting documents.' });
       }
       const paths = nodes.map((node) => {
@@ -541,10 +833,11 @@ export class VaultRepository {
       for (const { relative, documentId } of paths) {
         try {
           const record: DeletionRecord = { version: 1, path: relative, kind: 'document', original: await this.unchanged(relative), canvases: [] };
-          record.canvases.push(...(await Promise.all([...this.canvases].map(async ([relativeCanvas, file]) => {
+          record.canvases.push(...(await Promise.all([...this.canvases].map(async ([packagePath, file]) => {
             const removed = new Set(file.nodes.filter((node) => node.documentId === documentId).map((node) => node.id));
             if (!removed.size) return null;
-            return { path: relativeCanvas, before: await this.unchanged(relativeCanvas),
+            const layoutPath = packageLayoutPath(packagePath);
+            return { path: layoutPath, before: await this.unchanged(layoutPath),
               after: `${JSON.stringify(removeCanvasNodes(file, removed), null, 2)}\n` };
           }))).filter((change): change is NonNullable<typeof change> => change !== null));
           await this.deletion.begin(record);
@@ -553,8 +846,8 @@ export class VaultRepository {
             // Recovery may have stopped before writing every affected canvas.
             if (raw === change.after) {
               this.baselines.set(change.path, raw);
-              this.canvases.set(change.path, decodeCanvas(raw));
-              changedPaths.add(change.path);
+              this.canvases.set(parentFolderOf(change.path), decodeCanvas(raw));
+              changedPaths.add(parentFolderOf(change.path));
             }
           }
           if (this.deletion.issue) {
@@ -582,22 +875,29 @@ export class VaultRepository {
       const flatten = (entries: VaultEntry[]): VaultEntry[] => entries.flatMap((entry) => [entry, ...flatten(entry.children ?? [])]);
       const entries = flatten(snapshot.entries);
       const entry = entries.find((candidate) => candidate.path === relative);
-      if (!entry || entry.error) throw new OperationError({ code: 'invalid-input', message: 'Only valid vault files or folders can be deleted.' });
-      const contains = (candidate: string) => candidate === relative || (entry.kind === 'folder' && candidate.startsWith(`${relative}/`));
+      if (!entry || (entry.error && entry.kind !== 'canvas')) throw new OperationError({ code: 'invalid-input', message: 'Only valid vault files or folders can be deleted.' });
+      const contains = (candidate: string) => candidate === relative || (isContainerKind(entry.kind) && candidate.startsWith(`${relative}/`));
       const affected = entries.filter((candidate) => contains(candidate.path));
-      if (affected.some((candidate) => candidate.error)) throw new OperationError({ code: 'unavailable', message: 'Resolve unavailable files in this folder before deleting it.' });
-      const record: DeletionRecord = { version: 1, path: relative, kind: entry.kind, original: '', canvases: [] };
-      if (entry.kind === 'folder') {
+      if (entry.kind !== 'canvas' && affected.some((candidate) => candidate.error)) throw new OperationError({ code: 'unavailable', message: 'Resolve unavailable files in this folder before deleting it.' });
+      const record: DeletionRecord = { version: 1, path: relative, kind: entry.kind === 'document' ? 'document' : 'folder', original: '', canvases: [] };
+      if (entry.kind === 'folder' || entry.kind === 'canvas') {
         record.original = await folderDeletionFingerprint(source);
-        await Promise.all(affected.filter((candidate) => candidate.kind !== 'folder').map((candidate) => this.unchanged(candidate.path)));
+        if (!entry.error) {
+          await Promise.all(affected.flatMap((candidate) => {
+            if (candidate.kind === 'document' && !candidate.error) return [this.unchanged(candidate.path)];
+            if (candidate.kind === 'canvas' && !candidate.error) return [this.unchanged(packageLayoutPath(candidate.path))];
+            return [];
+          }));
+        }
       } else record.original = await this.unchanged(relative);
       const documentIds = new Set(affected.flatMap((candidate) => candidate.documentId ? [candidate.documentId] : []));
       if (documentIds.size) {
         if (entries.some((candidate) => !contains(candidate.path) && candidate.kind === 'canvas' && candidate.error)) throw new OperationError({ code: 'unavailable', message: 'Resolve unavailable canvases before deleting a document; its appearances cannot be checked safely.' });
-        record.canvases.push(...(await Promise.all([...this.canvases].filter(([canvasPath]) => !contains(canvasPath)).map(async ([canvasPath, canvas]) => {
+        record.canvases.push(...(await Promise.all([...this.canvases].filter(([packagePath]) => !contains(packagePath)).map(async ([packagePath, canvas]) => {
           const ids = new Set(canvas.nodes.filter((node) => documentIds.has(node.documentId)).map((node) => node.id));
           if (!ids.size) return null;
-          return { path: canvasPath, before: await this.unchanged(canvasPath), after: `${JSON.stringify(removeCanvasNodes(canvas, ids), null, 2)}\n` };
+          const layoutPath = packageLayoutPath(packagePath);
+          return { path: layoutPath, before: await this.unchanged(layoutPath), after: `${JSON.stringify(removeCanvasNodes(canvas, ids), null, 2)}\n` };
         }))).filter((change): change is NonNullable<typeof change> => change !== null));
       }
       await this.deletion.begin(record);

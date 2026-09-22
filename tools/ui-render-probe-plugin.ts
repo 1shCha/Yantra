@@ -2,7 +2,7 @@ import type { Plugin } from 'vite';
 
 // Explicit anchors fail closed when the instrumented components are refactored.
 const targets = [
-  ['vault-ui/VaultSidebar.tsx', "  const isFolder = entry.kind === 'folder';", "useRenderProbe('row', entry.resourceId ?? entry.id);"],
+  ['vault-ui/VaultSidebar.tsx', '  const expandable = isContainerKind(entry.kind);', "useRenderProbe('row', entry.resourceId ?? entry.id);"],
   ['vault-ui/VaultSidebar.tsx', '  const [dragging, setDragging]', "useRenderProbe('sidebar');"],
   ['vault/DocumentEditor.tsx', '  const { editor, titleError }', "useRenderProbe('document', file.id);"],
   ['vault/VaultDocumentNode.tsx', '  const isEditing = useCanvasState((state) => state.editingNodeId === props.id);', "useRenderProbe('canvas-node', documentId);"],

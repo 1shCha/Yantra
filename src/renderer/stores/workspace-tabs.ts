@@ -13,7 +13,11 @@ export interface OpenTabOptions { replaceTabId?: string; provisionalTabId?: stri
 export type TabStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
 export function fileEntries(entries: readonly VaultEntry[]): VaultEntry[] {
-  return entries.flatMap((entry) => entry.kind === 'folder' ? fileEntries(entry.children ?? []) : [entry]);
+  return entries.flatMap((entry) => {
+    if (entry.kind === 'folder') return fileEntries(entry.children ?? []);
+    if (entry.kind === 'canvas') return [entry, ...fileEntries(entry.children ?? [])];
+    return [entry];
+  });
 }
 export function tabForEntry(entry: VaultEntry): WorkspaceTab | undefined {
   const fileId = entry.kind === 'canvas' ? entry.canvasId : entry.documentId;
@@ -64,7 +68,11 @@ export function reconcileTabs(session: TabSession, vault: VaultSnapshot): TabSes
     const title = entry.name.replace(/\.yantra[DC]$/, '');
     return [tab.path === entry.path && tab.title === title ? tab : { ...tab, path: entry.path, title }];
   });
-  const activeTabId = tabs.some((tab) => tab.id === session.activeTabId) ? session.activeTabId : (tabs[0]?.id ?? null);
+  let activeTabId = session.activeTabId;
+  if (activeTabId && !tabs.some((tab) => tab.id === activeTabId)) {
+    const removedIndex = session.tabs.findIndex((tab) => tab.id === activeTabId);
+    activeTabId = tabs[Math.min(removedIndex, tabs.length - 1)]?.id ?? null;
+  }
   return { tabs, activeTabId };
 }
 const keyFor = (vault: VaultSnapshot) => `yantra:tabs:v1:${vault.metadata.id}:${vault.root}`;

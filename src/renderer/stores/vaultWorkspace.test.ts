@@ -5,7 +5,7 @@ import { newDocument, type DocumentFile, type VaultSnapshot } from '../../shared
 import { tiptapDocFromPlainText } from '../../shared/tiptap-document';
 import { createVaultWorkspace } from './vaultWorkspace';
 import { createVaultCanvasSession } from '../vault/vault-canvas-session';
-import { newCanvas } from '../../shared/vault-canvas';
+import { newCanvas, removeCanvasNodes } from '../../shared/vault-canvas';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -20,13 +20,14 @@ function setup() {
   const vault: VaultSnapshot = {
     sessionId: 'session', root: '/vault', name: 'Vault',
     appearances: [],
-    metadata: { formatVersion: 1, id: crypto.randomUUID(), createdAt: new Date().toISOString() },
+    metadata: { formatVersion: 2, id: crypto.randomUUID(), createdAt: new Date().toISOString() },
     entries: [a, b].map((file) => ({ path: `${file.title}.yantraD`, name: `${file.title}.yantraD`, documentId: file.id, kind: 'document' })),
   };
   const reads = new Map<string, ReturnType<typeof deferred<DocumentFile>>>();
   const writes: Array<{ sessionId: string; file: DocumentFile }> = [];
   let failSave = false;
   let choices = 0;
+  let createdCanvas = newCanvas('Untitled');
   const api: VaultOperations = {
     refresh: async () => vault, retryRecovery: async () => vault,
     deleteCanvasNodes: async () => { throw new Error('Not used by this test'); },
@@ -36,9 +37,11 @@ function setup() {
     moveEntry: async () => { throw new Error('Not used by this test'); },
     moveEntries: async () => ({ changes: [], unchanged: [] }),
     readCanvas: async () => { throw new Error('No test canvas'); },
-    createCanvas: async () => ({ path: 'Untitled.yantraC', canvas: newCanvas('Untitled') }),
+    createCanvas: async () => {
+      createdCanvas = newCanvas('Untitled');
+      return { path: 'Untitled', canvas: createdCanvas };
+    },
     saveCanvas: async () => ({ savedAt: new Date().toISOString() }),
-    createNodeDocument: async () => ({ path: 'Unfiled/Untitled.yantraD', document: newDocument('Untitled') }),
     restore: async () => vault,
     choose: async () => { choices += 1; return { ...vault, sessionId: 'second-session' }; },
     readDocument: (_session, path) => {
@@ -46,7 +49,17 @@ function setup() {
       reads.set(path, result);
       return result.promise;
     },
-    createDocument: async () => ({ path: 'Untitled.yantraD', document: newDocument('Untitled') }),
+    createDocument: async (_session, destination, position) => {
+      const document = newDocument('Untitled');
+      if (!destination) return { path: 'Untitled.yantraD', document };
+      const node = {
+        id: crypto.randomUUID(), kind: 'document' as const, documentId: document.id,
+        x: Math.round((position?.x ?? 0) - 110), y: Math.round((position?.y ?? 0) - 37.5),
+        width: 220, height: 75,
+      };
+      createdCanvas = { ...createdCanvas, nodes: [...createdCanvas.nodes, node], layerOrder: [...createdCanvas.layerOrder, node.id] };
+      return { path: `${destination}/Untitled.yantraD`, document, canvas: createdCanvas, nodeId: node.id };
+    },
     saveDocument: async (sessionId, file) => {
       if (failSave) throw new Error('Disk full');
       writes.push({ sessionId, file });
@@ -54,6 +67,73 @@ function setup() {
     },
   };
   return { store: createVaultWorkspace(testVaultApi(api)), api, a, b, vault, reads, writes, fail: (value: boolean) => { failSave = value; }, choices: () => choices };
+}
+
+function setupPackageBoard() {
+  const noteA = newDocument('NoteA');
+  const noteB = newDocument('NoteB');
+  const canvasFile = newCanvas('Board');
+  const nodeA = { id: crypto.randomUUID(), kind: 'document' as const, documentId: noteA.id, x: 0, y: 0, width: 220, height: 75 };
+  const nodeB = { id: crypto.randomUUID(), kind: 'document' as const, documentId: noteB.id, x: 300, y: 0, width: 220, height: 75 };
+  canvasFile.nodes = [nodeA, nodeB];
+  canvasFile.layerOrder = [nodeA.id, nodeB.id];
+  const packageChildren = [
+    { kind: 'document' as const, path: 'Board/NoteA.yantraD', name: 'NoteA.yantraD', documentId: noteA.id },
+    { kind: 'document' as const, path: 'Board/NoteB.yantraD', name: 'NoteB.yantraD', documentId: noteB.id },
+  ];
+  const packageEntry = { kind: 'canvas' as const, path: 'Board', name: 'Board', canvasId: canvasFile.id, children: packageChildren };
+  const vault: VaultSnapshot = {
+    sessionId: 'session', root: '/vault', name: 'Vault', appearances: [],
+    metadata: { formatVersion: 2, id: crypto.randomUUID(), createdAt: new Date().toISOString() },
+    entries: [packageEntry],
+  };
+  const reads = new Map<string, ReturnType<typeof deferred<DocumentFile>>>();
+  let deleteEntryImpl: VaultOperations['deleteEntry'] = async () => vault;
+  let deleteNodesImpl: VaultOperations['deleteCanvasNodes'] = async () => {
+    throw new Error('Not configured');
+  };
+  let refreshImpl: VaultOperations['refresh'] = async () => vault;
+  const api: VaultOperations = {
+    refresh: (session) => refreshImpl(session),
+    retryRecovery: async () => vault,
+    deleteCanvasNodes: (session, canvasId, nodeIds) => deleteNodesImpl(session, canvasId, nodeIds),
+    deleteEntry: (session, path) => deleteEntryImpl(session, path),
+    createFolder: async (_session, folder, name) => ({ path: folder ? `${folder}/${name}` : name }),
+    renameEntry: async () => { throw new Error('Not used'); },
+    moveEntry: async () => { throw new Error('Not used'); },
+    moveEntries: async () => ({ changes: [], unchanged: [] }),
+    readCanvas: async () => canvasFile,
+    createCanvas: async () => ({ path: 'Untitled', canvas: newCanvas('Untitled') }),
+    saveCanvas: async () => ({ savedAt: new Date().toISOString() }),
+    restore: async () => vault,
+    choose: async () => ({ ...vault, sessionId: 'second-session' }),
+    readDocument: (_session, path) => {
+      if (path === 'Board/NoteA.yantraD') return Promise.resolve(noteA);
+      if (path === 'Board/NoteB.yantraD') return Promise.resolve(noteB);
+      const result = deferred<DocumentFile>();
+      reads.set(path, result);
+      return result.promise;
+    },
+    createDocument: async () => { throw new Error('Not used'); },
+    saveDocument: async () => ({ savedAt: new Date().toISOString() }),
+  };
+  const store = createVaultWorkspace(testVaultApi(api));
+  function snapshotWithoutNoteA(): VaultSnapshot {
+    return {
+      ...vault,
+      entries: [{
+        ...packageEntry,
+        children: [packageChildren[1]!],
+      }],
+    };
+  }
+  return {
+    store, api, vault, noteA, noteB, canvasFile, nodeA, nodeB, packageEntry, packageChildren, reads,
+    snapshotWithoutNoteA,
+    onDeleteEntry: (impl: VaultOperations['deleteEntry']) => { deleteEntryImpl = impl; },
+    onDeleteNodes: (impl: VaultOperations['deleteCanvasNodes']) => { deleteNodesImpl = impl; },
+    onRefresh: (impl: VaultOperations['refresh']) => { refreshImpl = impl; },
+  };
 }
 
 describe('vault workspace registry', () => {
@@ -265,8 +345,9 @@ describe('blank node auto-edit', () => {
     const session = createVaultCanvasSession(store, canvasId);
     const disconnect = session.connect();
     try {
-      expect((await store.getState().placeDocument(canvasId, a.id, { x: 400, y: 300 })).status).toBe('success');
+      expect((await store.getState().placeDocument(canvasId, a.id, { x: 400, y: 300 })).status).toBe('failure');
       const state = session.flow.getState();
+      expect(state.nodes).toHaveLength(0);
       expect(state.editingNodeId).toBeNull();
       expect(store.getState().blankNodeEditTarget).toBeNull();
     } finally {
@@ -276,7 +357,7 @@ describe('blank node auto-edit', () => {
 
   it('does not leave edit state when blank-node creation fails', async () => {
     const { store, api } = setup();
-    api.createNodeDocument = async () => { throw new Error('Disk full'); };
+    api.createDocument = async () => { throw new Error('Disk full'); };
     await store.getState().restore();
     await store.getState().createCanvas();
     const canvasId = store.getState().activeCanvasId!;
@@ -295,9 +376,9 @@ describe('blank node auto-edit', () => {
     const { store, api } = setup();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const original = api.createNodeDocument;
+    const original = api.createDocument;
     let calls = 0;
-    api.createNodeDocument = async (...args) => {
+    api.createDocument = async (...args) => {
       if (++calls === 1) await gate;
       return original(...args);
     };
@@ -573,6 +654,102 @@ describe('workspace tabs', () => {
     expect(store.getState().tabs.map((tab) => [tab.fileId, tab.path, tab.title])).toEqual([[a.id, 'Moved.yantraD', 'Moved']]);
     expect(store.getState().activeDocumentId).toBe(a.id);
   });
+
+  it('closes only the deleted package-note tab while keeping the board and sibling note tabs', async () => {
+    const { store, onRefresh, noteA, noteB, canvasFile } = setupPackageBoard();
+    await store.getState().restore();
+    await store.getState().openCanvas('Board');
+    const boardTab = store.getState().tabs.find((tab) => tab.kind === 'canvas')!.id;
+    await store.getState().openDocument('Board/NoteA.yantraD');
+    await store.getState().openDocument('Board/NoteB.yantraD');
+    onRefresh(async () => ({
+      sessionId: 'session', root: '/vault', name: 'Vault', appearances: [], metadata: store.getState().vault!.metadata,
+      entries: [{ kind: 'canvas', path: 'Board', name: 'Board', canvasId: canvasFile.id,
+        children: [{ kind: 'document', path: 'Board/NoteB.yantraD', name: 'NoteB.yantraD', documentId: noteB.id }] }],
+    }));
+    await store.getState().refresh();
+    expect(store.getState().tabs.map((tab) => tab.fileId).sort()).toEqual([canvasFile.id, noteB.id].sort());
+    expect(store.getState().tabs.some((tab) => tab.fileId === noteA.id)).toBe(false);
+    expect(store.getState().activeTabId).toBe(store.getState().tabs.find((tab) => tab.fileId === noteB.id)!.id);
+    expect(store.getState().tabs.find((tab) => tab.id === boardTab)).toBeDefined();
+  });
+
+  it('keeps the board tab when a canvas node is deleted without an open note tab', async () => {
+    const { store, onDeleteNodes, canvasFile, nodeA, nodeB, snapshotWithoutNoteA } = setupPackageBoard();
+    await store.getState().restore();
+    await store.getState().openCanvas('Board');
+    const tabsBefore = store.getState().tabs.map((tab) => tab.id);
+    onDeleteNodes(async () => ({
+      snapshot: snapshotWithoutNoteA(),
+      canvases: [{ ...canvasFile, nodes: [nodeB], layerOrder: [nodeB.id] }],
+    }));
+    expect((await store.getState().deleteCanvasNodes(canvasFile.id, [nodeA.id])).status).toBe('success');
+    expect(store.getState().tabs.map((tab) => tab.id)).toEqual(tabsBefore);
+    expect(store.getState().activeCanvasId).toBe(canvasFile.id);
+  });
+
+  it('closes an open note tab after canvas node deletion and leaves the board tab', async () => {
+    const { store, onDeleteNodes, canvasFile, nodeA, nodeB, snapshotWithoutNoteA } = setupPackageBoard();
+    await store.getState().restore();
+    await store.getState().openCanvas('Board');
+    const boardTab = store.getState().tabs.find((tab) => tab.kind === 'canvas')!.id;
+    await store.getState().openDocument('Board/NoteA.yantraD');
+    onDeleteNodes(async () => ({
+      snapshot: snapshotWithoutNoteA(),
+      canvases: [{ ...canvasFile, nodes: [nodeB], layerOrder: [nodeB.id] }],
+    }));
+    expect((await store.getState().deleteCanvasNodes(canvasFile.id, [nodeA.id])).status).toBe('success');
+    expect(store.getState().tabs.map((tab) => tab.id)).toEqual([boardTab]);
+    expect(store.getState().activeTabId).toBe(boardTab);
+  });
+
+  it('closes the package board and every open note tab when the package is trashed', async () => {
+    const { store, onDeleteEntry, noteA, noteB, canvasFile, packageEntry } = setupPackageBoard();
+    await store.getState().restore();
+    await store.getState().openCanvas('Board');
+    await store.getState().openDocument('Board/NoteA.yantraD');
+    await store.getState().openDocument('Board/NoteB.yantraD');
+    onDeleteEntry(async () => ({
+      sessionId: 'session', root: '/vault', name: 'Vault', appearances: [], metadata: store.getState().vault!.metadata, entries: [],
+    }));
+    expect((await store.getState().deleteEntry(packageEntry.path)).status).toBe('success');
+    expect(store.getState().tabs).toHaveLength(0);
+    expect(store.getState().activeTabId).toBeNull();
+    expect(store.getState().tabs.some((tab) => [noteA.id, noteB.id, canvasFile.id].includes(tab.fileId))).toBe(false);
+  });
+
+  it('leaves tabs unchanged when deleteEntry fails', async () => {
+    const { store, onDeleteEntry, packageEntry } = setupPackageBoard();
+    await store.getState().restore();
+    await store.getState().openCanvas('Board');
+    await store.getState().openDocument('Board/NoteA.yantraD');
+    const before = store.getState().tabs.map((tab) => tab.id);
+    onDeleteEntry(async () => { throw new Error('Trash unavailable'); });
+    expect((await store.getState().deleteEntry(packageEntry.path)).status).toBe('failure');
+    expect(store.getState().tabs.map((tab) => tab.id)).toEqual(before);
+  });
+
+  it('updates the open board, document path, and appearances after a membership move', async () => {
+    const { store, api, noteA, noteB, canvasFile, nodeA } = setupPackageBoard();
+    await store.getState().restore();
+    await store.getState().openCanvas('Board');
+    await store.getState().openDocument('Board/NoteA.yantraD');
+    const boardBefore = store.getState().canvases.get(canvasFile.id)!;
+    const unrelatedBefore = store.getState().documents.get(noteB.id);
+    const updatedBoard = removeCanvasNodes(boardBefore.file, new Set([nodeA.id]));
+    api.moveEntry = async (_session, relative, folder) => ({
+      from: relative,
+      to: folder ? `${folder}/${relative.split('/').at(-1)!}` : relative.split('/').at(-1)!,
+      document: noteA,
+      canvases: [updatedBoard],
+    });
+    expect((await store.getState().moveEntry('Board/NoteA.yantraD', '')).status).toBe('success');
+    expect(store.getState().documents.get(noteA.id)?.path).toBe('NoteA.yantraD');
+    expect(store.getState().canvases.get(canvasFile.id)?.file.nodes.some((node) => node.documentId === noteA.id)).toBe(false);
+    expect(store.getState().documents.get(noteB.id)).toBe(unrelatedBefore);
+    expect(store.getState().vault?.appearances.some((appearance) => appearance.documentId === noteA.id)).toBe(false);
+    expect(store.getState().vault?.appearances.some((appearance) => appearance.documentId === noteB.id)).toBe(true);
+  });
 });
 
 describe('rename render identity', () => {
@@ -595,7 +772,7 @@ describe('rename render identity', () => {
     expect(after.vault?.entries.find((entry) => entry.documentId === b.id)).toBe(before.vault?.entries.find((entry) => entry.documentId === b.id));
   });
 
-  it('does not publish a flow update when renaming a canvas', async () => {
+  it('renames a package and leaves the canvas flow unchanged', async () => {
     const { store, api } = setup();
     await store.getState().restore();
     await store.getState().createCanvas();
@@ -608,11 +785,18 @@ describe('rename render identity', () => {
     const before = store.getState();
     const canvas = before.canvases.get(id)!;
     const geometry = session.flow.getState();
-    api.renameEntry = async () => ({ from: canvas.path, to: 'Renamed.yantraC', canvas: { ...structuredClone(canvas.file), title: 'Renamed' } });
+    api.renameEntry = async (_session, relative, name) => ({
+      from: relative, to: name, canvas: { ...canvas.file, title: name, updatedAt: new Date().toISOString() },
+    });
     try {
       expect((await store.getState().renameEntry(canvas.path, 'Renamed')).status).toBe('success');
+      expect(store.getState().canvases.get(id)?.path).toBe('Renamed');
       expect(store.getState().canvases.get(id)?.file.title).toBe('Renamed');
-      expect(store.getState().documents).toBe(before.documents);
+      expect(store.getState().canvases.get(id)?.file.nodes).toBe(canvas.file.nodes);
+      const child = [...store.getState().documents.values()][0]!;
+      expect(child.path).toBe('Renamed/Untitled.yantraD');
+      expect(child.reloadRevision).toBe(0);
+      expect(child.file.doc).toBe(before.documents.get(child.file.id)?.file.doc);
       expect(session.flow.getState()).toBe(geometry);
       expect(updates).not.toHaveBeenCalled();
     } finally { unsubscribe(); disconnect(); }

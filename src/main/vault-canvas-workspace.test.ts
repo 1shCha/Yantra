@@ -32,17 +32,17 @@ describe('vault canvas registry', () => {
       moveEntries: (_session, paths, folder) => repo.moveEntries(paths, folder),
       restore: () => repo.scan(), choose: async () => null,
       readDocument: (_session, relative, mode) => repo.readDocument(relative, mode),
-      createDocument: (_session, folder) => repo.createDocument(folder),
+      createDocument: (_session, folder, position) => repo.createDocument(folder, position),
       saveDocument: (_session, document) => repo.saveDocument(document),
       readCanvas: (_session, relative, mode) => repo.readCanvas(relative, mode),
       createCanvas: (_session, folder) => repo.createCanvas(folder),
       saveCanvas: (_session, canvas) => repo.saveCanvas(canvas),
-      createNodeDocument: () => repo.createNodeDocument(),
     };
     store = createVaultWorkspace(testVaultApi(api));
     await store.getState().restore();
   });
   afterEach(async () => {
+    VaultRepository.failNextPackageLayoutWrite = false;
     await store.getState().flush().catch(() => { /* Failed drafts are intentional in failure tests. */ });
     await fs.rm(root, { recursive: true, force: true });
   });
@@ -54,25 +54,22 @@ describe('vault canvas registry', () => {
     return id;
   }
 
-  it('creates a durable Unfiled document before writing its canvas reference', async () => {
+  it('creates a durable package document and matching node in one repository operation', async () => {
     const order: string[] = [];
-    api.createNodeDocument = async () => {
-      const result = await repo.createNodeDocument();
+    api.createDocument = async (_session, destination, position) => {
+      const result = await repo.createDocument(destination, position);
       order.push('document');
+      expect(result.canvas?.nodes.some((node) => node.documentId === result.document.id)).toBe(true);
+      expect(await fs.readFile(path.join(root, result.path), 'utf8')).toContain(result.document.id);
       return result;
     };
-    api.saveCanvas = async (_session, canvas) => {
-      expect(await fs.readFile(path.join(root, 'Unfiled/Untitled.yantraD'), 'utf8')).toContain(canvas.nodes[0]!.documentId);
-      order.push('canvas');
-      return repo.saveCanvas(canvas);
-    };
     const id = await createNode();
-    expect(order).toEqual(['document', 'canvas']);
+    expect(order).toEqual(['document']);
     const loaded = store.getState().canvases.get(id)!;
     expect(loaded.file.nodes[0]!.id).not.toBe(loaded.file.nodes[0]!.documentId);
     expect(loaded.file.nodes[0]).toMatchObject({ x: 390, y: 363, width: 220, height: 75 });
     expect(loaded.save.state).toBe('clean');
-    expect(store.getState().vault?.entries.find((entry) => entry.path === 'Unfiled')?.children).toHaveLength(1);
+    expect(store.getState().vault?.entries.find((entry) => entry.path === 'Untitled')?.children).toHaveLength(1);
   });
 
   it('keeps editing live during queued creations and commits the latest canvas without losing changes', async () => {
@@ -82,9 +79,9 @@ describe('vault canvas registry', () => {
     const first = store.getState().canvases.get(id)!.file.nodes[0]!;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const original = api.createNodeDocument;
+    const original = api.createDocument;
     let calls = 0;
-    api.createNodeDocument = async (...args) => { if (++calls === 1) await gate; return original(...args); };
+    api.createDocument = async (...args) => { if (++calls === 1) await gate; return original(...args); };
     const adding = store.getState().createCanvasNode(id, { x: 700, y: 500 });
     const queued = store.getState().createCanvasNode(id, { x: 1100, y: 500 });
     await Promise.resolve();
@@ -100,10 +97,10 @@ describe('vault canvas registry', () => {
     expect((await queued).status).toBe('success');
     await closing;
     expect(calls).toBe(2);
-    const canvas = await repo.readCanvas('Untitled.yantraC');
+    const canvas = await repo.readCanvas('Untitled');
     expect(canvas.nodes).toHaveLength(3);
     expect(canvas.nodes[0]).toMatchObject({ id: first.id, x: 80, y: 100 });
-    expect((await repo.readDocument('Unfiled/Untitled.yantraD')).doc).toEqual(tiptapDocFromPlainText('Edited while creating'));
+    expect((await repo.readDocument('Untitled/Untitled.yantraD')).doc).toEqual(tiptapDocFromPlainText('Edited while creating'));
     disconnect();
   });
 
@@ -118,13 +115,13 @@ describe('vault canvas registry', () => {
     const stop = store.subscribe((state) => {
       for (const node of state.canvases.get(id)!.file.nodes) {
         expect(state.documents.has(node.documentId)).toBe(true);
-        expect(state.vault!.entries.find((entry) => entry.path === 'Unfiled')!.children!.some((entry) => entry.documentId === node.documentId)).toBe(true);
+        expect(state.vault!.entries.find((entry) => entry.path === 'Untitled')!.children!.some((entry) => entry.documentId === node.documentId)).toBe(true);
       }
     });
     expect((await store.getState().createCanvasNode(id, { x: 1200, y: 400 })).status).toBe('success');
     const after = session.flow.getState();
     expect(after.nodes[0]).toBe(first);
-    expect(after.edges).toBe(before.edges);
+    expect(after.edges).toEqual(before.edges);
     expect(after.nodes[1]?.selected).toBe(false);
     expect(after.selectedNodeIds).toEqual([after.nodes[2]!.id]);
     stop(); disconnect();
@@ -142,7 +139,7 @@ describe('vault canvas registry', () => {
     await store.getState().openCanvas(loaded.path);
     expect(store.getState().activeDocumentId).toBeNull();
     expect(store.getState().documents.get(node.documentId)?.file.doc).toEqual(tiptapDocFromPlainText('From standalone editor'));
-    expect(store.getState().canvases.get(id)?.save.revision).toBe(1);
+    expect(store.getState().canvases.get(id)?.save.revision).toBe(0);
     await store.getState().flush();
     const reopened = createVaultWorkspace(testVaultApi(api));
     await reopened.getState().restore();
@@ -172,39 +169,39 @@ describe('vault canvas registry', () => {
   });
 
   it('does not create a node when document creation fails', async () => {
-    api.createNodeDocument = async () => { throw new Error('Cannot create document'); };
+    api.createDocument = async () => { throw new Error('Cannot create document'); };
     const id = await createNode();
     expect(store.getState().canvases.get(id)?.file.nodes).toEqual([]);
     expect(store.getState().documents.size).toBe(0);
     expect(store.getState().error).toContain('Cannot create document');
   });
 
-  it('retains the standalone document and retryable canvas draft if canvas saving fails', async () => {
-    api.saveCanvas = async () => { throw new Error('Canvas write failed'); };
-    const id = await createNode();
-    const loaded = store.getState().canvases.get(id)!;
-    expect(loaded.save.state).toBe('error');
-    expect((await repo.readCanvas(loaded.path)).nodes).toEqual([]);
-    expect(await repo.readDocument('Unfiled/Untitled.yantraD')).toBeDefined();
-    await store.getState().choose(false);
-    expect(store.getState().error).toContain('Canvas write failed');
-    api.saveCanvas = (_session, file) => repo.saveCanvas(file);
-    await store.getState().retryCanvas(id);
-    expect((await repo.readCanvas(loaded.path)).nodes).toEqual(loaded.file.nodes);
+  it('keeps the new document and marks only that package unavailable if layout writing fails', async () => {
+    await store.getState().createCanvas();
+    const otherId = store.getState().activeCanvasId!;
+    const otherPath = store.getState().canvases.get(otherId)!.path;
+    await store.getState().createCanvas();
+    const id = store.getState().activeCanvasId!;
+    VaultRepository.failNextPackageLayoutWrite = true;
+    expect((await store.getState().createCanvasNode(id, { x: 500, y: 400 })).status).toBe('failure');
+    expect(store.getState().canvases.has(id)).toBe(false);
+    expect(await fs.readFile(path.join(root, 'Untitled_2/Untitled.yantraD'), 'utf8')).toContain('"title": "Untitled"');
+    expect(store.getState().vault?.entries.find((entry) => entry.path === 'Untitled_2')?.error).toBeDefined();
+    expect(store.getState().canvases.get(otherId)?.path).toBe(otherPath);
+    expect((await repo.readCanvas(otherPath)).nodes).toEqual([]);
+    await store.getState().createCanvasNode(otherId, { x: 200, y: 200 });
+    expect(store.getState().canvases.get(otherId)?.file.nodes).toHaveLength(1);
   });
 
-  it('retains missing-document nodes and reports an error per reference', async () => {
+  it('treats a package with a missing document as invalid and refuses to open it', async () => {
     const id = await createNode();
     const loaded = store.getState().canvases.get(id)!;
-    const documentId = loaded.file.nodes[0]!.documentId;
-    await fs.unlink(path.join(root, 'Unfiled/Untitled.yantraD'));
+    await fs.unlink(path.join(root, 'Untitled/Untitled.yantraD'));
     const reopened = createVaultWorkspace(testVaultApi(api));
     await reopened.getState().restore();
-    await reopened.getState().openCanvas(loaded.path);
-    expect(reopened.getState().loadState).toBe('ready');
-    expect(reopened.getState().canvases.get(id)?.file.nodes).toEqual(loaded.file.nodes);
-    expect(reopened.getState().canvases.get(id)?.documentErrors.get(documentId)).toContain('missing');
-    expect(reopened.getState().documents.has(documentId)).toBe(false);
+    expect(reopened.getState().vault?.entries.find((entry) => entry.path === loaded.path)?.error).toBeDefined();
+    expect((await reopened.getState().openCanvas(loaded.path)).status).toBe('failure');
+    expect(reopened.getState().canvases.has(id)).toBe(false);
   });
 
   it('does not let a late canvas load replace a newer document selection', async () => {
@@ -215,7 +212,7 @@ describe('vault canvas registry', () => {
     const next = createVaultWorkspace(testVaultApi(api));
     await next.getState().restore();
     const pending = next.getState().openCanvas(loaded.path);
-    await next.getState().openDocument('Unfiled/Untitled.yantraD');
+    await next.getState().openDocument('Untitled/Untitled.yantraD');
     release(loaded.file);
     await pending;
     expect(next.getState().activeCanvasId).toBeNull();
@@ -227,7 +224,7 @@ describe('vault canvas registry', () => {
     const loaded = store.getState().canvases.get(first)!;
     await store.getState().createCanvas();
     const second = store.getState().activeCanvasId!;
-    expect(() => store.getState().updateCanvas(second, presentation(loaded.file))).toThrow('only one canvas');
+    expect(() => store.getState().updateCanvas(second, presentation(loaded.file))).toThrow('membership');
     expect(store.getState().canvases.get(second)?.file.nodes).toEqual([]);
   });
 

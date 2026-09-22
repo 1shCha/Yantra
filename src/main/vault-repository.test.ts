@@ -16,7 +16,7 @@ describe('VaultRepository', () => {
     await fs.writeFile(path.join(root, 'default.canvas'), 'legacy data');
     const repo = await VaultRepository.open(root, true);
     const snapshot = await repo.scan();
-    expect(snapshot.metadata.formatVersion).toBe(1);
+    expect(snapshot.metadata.formatVersion).toBe(2);
     expect(snapshot.entries).toEqual([]);
     expect(await fs.readFile(path.join(root, 'default.canvas'), 'utf8')).toBe('legacy data');
     await expect(VaultRepository.open(root, true)).rejects.toThrow();
@@ -117,11 +117,11 @@ describe('VaultRepository', () => {
     const externalDocument = JSON.stringify({ ...document.document, doc: tiptapDocFromPlainText('External edit') });
     const externalCanvas = JSON.stringify({ ...canvas.canvas, viewport: { x: 80, y: 90, zoom: 1 } });
     await fs.writeFile(path.join(root, document.path), externalDocument);
-    await fs.writeFile(path.join(root, canvas.path), externalCanvas);
+    await fs.writeFile(path.join(root, `${canvas.path}/${canvas.canvas.title}.yantraC`), externalCanvas);
     await expect(repo.saveDocument(document.document)).rejects.toMatchObject({ failure: { code: 'conflict' } });
     await expect(repo.saveCanvas(canvas.canvas)).rejects.toMatchObject({ failure: { code: 'conflict' } });
     expect(await fs.readFile(path.join(root, document.path), 'utf8')).toBe(externalDocument);
-    expect(await fs.readFile(path.join(root, canvas.path), 'utf8')).toBe(externalCanvas);
+    expect(await fs.readFile(path.join(root, `${canvas.path}/${canvas.canvas.title}.yantraC`), 'utf8')).toBe(externalCanvas);
   });
 
   it('accepts new disk baselines only after a successful refresh, not an ordinary scan', async () => {
@@ -146,7 +146,7 @@ describe('VaultRepository', () => {
     const externalDoc = { ...document.document, doc: tiptapDocSchema.parse(tiptapDocFromPlainText('External text')) };
     const externalCanvas = { ...canvas.canvas, viewport: { x: 123, y: 456, zoom: 0.5 } };
     await fs.writeFile(path.join(root, document.path), JSON.stringify(externalDoc));
-    await fs.writeFile(path.join(root, canvas.path), JSON.stringify(externalCanvas));
+    await fs.writeFile(path.join(root, `${canvas.path}/${canvas.canvas.title}.yantraC`), JSON.stringify(externalCanvas));
     expect(await repo.readDocument(document.path)).toEqual(externalDoc);
     expect(await repo.readCanvas(canvas.path)).toEqual(externalCanvas);
     await expect(repo.saveDocument(document.document)).rejects.toMatchObject({ failure: { code: 'conflict' } });

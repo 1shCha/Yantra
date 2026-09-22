@@ -2,13 +2,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { packageLayoutPath } from '../shared/vault-packages';
 import { VaultRepository } from './vault-repository';
-import { newCanvas, type CanvasFile } from '../shared/vault-canvas';
-
-function withDocument(canvas: CanvasFile, documentId: string): CanvasFile {
-  const node = { id: crypto.randomUUID(), kind: 'document' as const, documentId, x: 20, y: 30, width: 320, height: 220 };
-  return { ...canvas, nodes: [node], layerOrder: [node.id] };
-}
+import { newCanvas } from '../shared/vault-canvas';
 
 describe('vault canvas files', () => {
   let root: string;
@@ -19,74 +15,84 @@ describe('vault canvas files', () => {
   });
   afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
 
-  it('creates unique canvases and reopens document references from disk', async () => {
+  it('creates unique packages and reopens document references from disk', async () => {
     const created = await Promise.all([repo.createCanvas(''), repo.createCanvas('')]);
     expect(new Set(created.map((item) => item.path)).size).toBe(2);
-    const document = await repo.createNodeDocument();
-    expect(document.path).toBe('Unfiled/Untitled.yantraD');
-    const canvas = withDocument(created[0]!.canvas, document.document.id);
-    await repo.saveCanvas(canvas);
+    const document = await repo.createDocument(created[0]!.path, { x: 130, y: 67.5 });
+    expect(document.path).toBe(`${created[0]!.path}/Untitled.yantraD`);
+    expect(document.canvas?.nodes[0]).toMatchObject({ documentId: document.document.id, x: 20, y: 30 });
     const reopened = await VaultRepository.open(root);
     const snapshot = await reopened.scan();
-    expect(snapshot.entries.find((entry) => entry.path === created[0]!.path)?.canvasId).toBe(canvas.id);
-    expect(await reopened.readCanvas(created[0]!.path)).toEqual(canvas);
-    expect(await fs.readFile(path.join(root, created[0]!.path), 'utf8')).not.toContain('"doc":');
+    expect(snapshot.entries.find((entry) => entry.path === created[0]!.path)?.canvasId).toBe(created[0]!.canvas.id);
+    expect(await reopened.readCanvas(created[0]!.path)).toEqual(document.canvas);
+    expect(await fs.readFile(path.join(root, packageLayoutPath(created[0]!.path)), 'utf8')).not.toContain('"doc":');
   });
 
-  it('requires a durable document before saving a new reference', async () => {
+  it('rejects layout saves that add a new document reference', async () => {
     const created = await repo.createCanvas('');
-    await expect(repo.saveCanvas(withDocument(created.canvas, crypto.randomUUID()))).rejects.toThrow('Save the document');
+    const extra = { id: crypto.randomUUID(), kind: 'document' as const, documentId: crypto.randomUUID(), x: 20, y: 30, width: 320, height: 220 };
+    await expect(repo.saveCanvas({
+      ...created.canvas,
+      nodes: [extra],
+      layerOrder: [extra.id],
+    })).rejects.toThrow('membership');
     expect((await repo.readCanvas(created.path)).nodes).toEqual([]);
   });
 
-  it('serializes concurrent cross-canvas appearance claims', async () => {
-    const document = await repo.createNodeDocument();
+  it('rejects placing the same document onto another package through a layout save', async () => {
     const a = await repo.createCanvas('');
     const b = await repo.createCanvas('');
-    const outcomes = await Promise.allSettled([
-      repo.saveCanvas(withDocument(a.canvas, document.document.id)),
-      repo.saveCanvas(withDocument(b.canvas, document.document.id)),
-    ]);
-    expect(outcomes.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+    const document = await repo.createDocument(a.path);
+    const stolen = {
+      ...b.canvas,
+      nodes: document.canvas!.nodes,
+      layerOrder: document.canvas!.layerOrder,
+    };
+    await expect(repo.saveCanvas(stolen)).rejects.toThrow('membership');
     expect((await repo.readCanvas(b.path)).nodes).toEqual([]);
+    expect((await repo.readCanvas(a.path)).nodes).toHaveLength(1);
   });
 
-  it('preserves missing references during layout saves without recreating documents', async () => {
-    const document = await repo.createNodeDocument();
+  it('marks a package unavailable when a document file disappears, without recreating it', async () => {
     const created = await repo.createCanvas('');
-    const canvas = withDocument(created.canvas, document.document.id);
-    await repo.saveCanvas(canvas);
+    const document = await repo.createDocument(created.path);
     await fs.unlink(path.join(root, document.path));
     const reopened = await VaultRepository.open(root);
-    await reopened.scan();
-    canvas.nodes[0]!.x = 200;
-    await reopened.saveCanvas(canvas);
-    expect((await reopened.readCanvas(created.path)).nodes).toEqual(canvas.nodes);
+    const snapshot = await reopened.scan();
+    expect(snapshot.entries.find((entry) => entry.path === created.path)?.error).toBeDefined();
+    await expect(reopened.saveCanvas(document.canvas!)).rejects.toThrow();
     await expect(fs.stat(path.join(root, document.path))).rejects.toThrow();
   });
 
-  it('reports conflicting appearances and duplicate canvas IDs without rewriting files', async () => {
-    const documentId = crypto.randomUUID();
-    const a = withDocument(newCanvas('A'), documentId);
-    const b = withDocument(newCanvas('B'), documentId);
+  it('reports loose layouts and duplicate package IDs without rewriting files', async () => {
+    const a = newCanvas('A');
+    const node = { id: crypto.randomUUID(), kind: 'document' as const, documentId: crypto.randomUUID(), x: 0, y: 0, width: 220, height: 75 };
+    const b = { ...newCanvas('B'), nodes: [node], layerOrder: [node.id] };
     await fs.writeFile(path.join(root, 'A.yantraC'), JSON.stringify(a));
     await fs.writeFile(path.join(root, 'B.yantraC'), JSON.stringify(b));
-    expect((await repo.scan()).entries.every((entry) => entry.error?.includes('more than one'))).toBe(true);
-    await expect(repo.readCanvas('A.yantraC')).rejects.toThrow('ambiguous');
-    await fs.writeFile(path.join(root, 'B.yantraC'), JSON.stringify({ ...b, id: a.id }));
-    expect((await repo.scan()).entries.every((entry) => entry.error?.includes('Duplicate canvas'))).toBe(true);
+    const loose = await repo.scan();
+    expect(loose.entries.every((entry) => entry.error)).toBe(true);
+    await expect(repo.readCanvas('A.yantraC')).rejects.toThrow();
     expect(await fs.readFile(path.join(root, 'A.yantraC'), 'utf8')).toBe(JSON.stringify(a));
+    await fs.mkdir(path.join(root, 'First'));
+    await fs.mkdir(path.join(root, 'Second'));
+    await fs.writeFile(path.join(root, 'First/First.yantraC'), JSON.stringify({ ...a, title: 'First' }));
+    await fs.writeFile(path.join(root, 'Second/Second.yantraC'), JSON.stringify({ ...a, title: 'Second' }));
+    await fs.unlink(path.join(root, 'A.yantraC'));
+    await fs.unlink(path.join(root, 'B.yantraC'));
+    const duplicates = await repo.scan();
+    expect(duplicates.entries.every((entry) => entry.error?.includes('Duplicate canvas'))).toBe(true);
+    expect(await fs.readFile(path.join(root, 'First/First.yantraC'), 'utf8')).toBe(JSON.stringify({ ...a, title: 'First' }));
   });
 
-  it('rejects symlink Unfiled, invalid destinations, removed canvases, and unknown versions', async () => {
-    await fs.symlink(os.tmpdir(), path.join(root, 'Unfiled'));
-    await expect(repo.createNodeDocument()).rejects.toThrow('Symbolic links');
+  it('rejects invalid destinations, removed packages, and unknown versions', async () => {
     await expect(repo.createCanvas('../')).rejects.toThrow('Invalid vault path');
     await expect(repo.createCanvas('.yantra')).rejects.toThrow('Invalid vault path');
     const created = await repo.createCanvas('');
-    await fs.unlink(path.join(root, created.path));
+    await fs.rm(path.join(root, created.path), { recursive: true, force: true });
     await expect(repo.saveCanvas(created.canvas)).rejects.toThrow();
-    await fs.writeFile(path.join(root, 'Future.yantraC'), JSON.stringify({ ...newCanvas('Future'), formatVersion: 99 }));
-    expect((await repo.scan()).entries[0]?.error).toContain('Unsupported canvas');
+    await fs.mkdir(path.join(root, 'Future'));
+    await fs.writeFile(path.join(root, 'Future/Future.yantraC'), JSON.stringify({ ...newCanvas('Future'), formatVersion: 99 }));
+    expect((await repo.scan()).entries.find((entry) => entry.path === 'Future')?.error).toContain('Unsupported canvas');
   });
 });

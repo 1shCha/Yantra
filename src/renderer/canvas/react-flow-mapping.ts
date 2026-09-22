@@ -4,8 +4,10 @@ import type { TiptapDoc } from '../../shared/tiptap-document';
 
 export const REACT_FLOW_TEXT_NODE_TYPE = 'markdownNode' as const;
 
-export const MARKDOWN_NODE_DEFAULT_WIDTH = 220;
-export const MARKDOWN_NODE_DEFAULT_HEIGHT = 75;
+import { CANVAS_NODE_DEFAULT_HEIGHT, CANVAS_NODE_DEFAULT_WIDTH } from '../../shared/vault-packages';
+
+export const MARKDOWN_NODE_DEFAULT_WIDTH = CANVAS_NODE_DEFAULT_WIDTH;
+export const MARKDOWN_NODE_DEFAULT_HEIGHT = CANVAS_NODE_DEFAULT_HEIGHT;
 
 const NODE_WIDTH = MARKDOWN_NODE_DEFAULT_WIDTH;
 const NODE_HEIGHT = MARKDOWN_NODE_DEFAULT_HEIGHT;

@@ -60,7 +60,7 @@ export function createVaultCanvasSession(workspace: ReturnType<typeof createVaul
   }
 
   function publish(viewport = lastFile.viewport) {
-    if (synchronizing || workspace.getState().busy || workspace.getState().deletingCanvasId === canvasId) return;
+    if (synchronizing || workspace.getState().busy || workspace.getState().deletingDocumentIds.size > 0) return;
     const state = flow.getState();
     const presentation: CanvasPresentation = {
       nodes: state.nodes.map((node) => {
